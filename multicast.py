@@ -6,9 +6,6 @@ class TrustDomain:
     def __str__(self):
         return self.name
 
-    def __hash__(self):
-        return hash((self.name))
-
 
 class Client:
     def __init__(self, name, trust_domain):
@@ -18,9 +15,6 @@ class Client:
 
     def __str__(self):
         return self.name
-
-    def __hash__(self):
-        return hash((self.name, self.trust_domain))
 
 
 class Switch:
@@ -32,9 +26,6 @@ class Switch:
 
     def __str__(self):
         return self.name
-
-    def __hash__(self):
-        return hash((self.name, self.trust_domain))
 
 
 class Router(Switch):
