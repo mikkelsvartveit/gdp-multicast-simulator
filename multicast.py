@@ -32,22 +32,29 @@ class Router(Switch):
     def __init__(self, name, parent_router, trust_domain):
         super().__init__(name, trust_domain)
         self.parent_router = parent_router
+        self.children = set()
 
         # Stuff below here is the RIB (lives inside the router)
         self.rib_multicast_groups = {}
         # self.rib_nexthop_entries = {}
 
-    def create_multicast_group(self, group_name, creator):
+    def create_multicast_group(self, group_name, node):
         # Create new multicast group in RIB
-        self.rib_multicast_groups[group_name] = set([creator])
+        self.rib_multicast_groups[group_name] = set([node])
 
-        # Add multicast group to parent RIB
+        # Create multicast group in parent RIB
         if self.parent_router != None:
-            leaf_router = creator.trust_domain.router
+            leaf_router = node if isinstance(node, Router) else node.trust_domain.router
             self.parent_router.create_multicast_group(group_name, leaf_router)
 
-    def add_multicast_group_member(self, group, member):
-        self.rib_multicast_groups[group].add(member)
+    def add_multicast_group_member(self, group, node):
+        if node not in self.rib_multicast_groups[group]:
+            self.rib_multicast_groups[group].add(node)
+
+            # Propagate to parent
+            leaf_router = node if isinstance(node, Router) else node.trust_domain.router
+            if self.parent_router != None:
+                self.parent_router.add_multicast_group_member(group, leaf_router)
 
     def get_nexthop(self, address):
         return self.rib_nexthop_entries[address]
