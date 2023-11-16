@@ -1,7 +1,7 @@
 class TrustDomain:
-    def __init__(self, name, router):
+    def __init__(self, name):
         self.name = name
-        self.router = router
+        self.router = None
 
     def __str__(self):
         return self.name
@@ -28,9 +28,13 @@ class Switch:
         return self.name
 
 
-class Router(Switch):
+class Router(Switch):  # A Router is a subclass of a Switch
     def __init__(self, name, parent_router, trust_domain):
         super().__init__(name, trust_domain)
+
+        if trust_domain:
+            trust_domain.router = self
+
         self.parent_router = parent_router
         self.children = set()
 
@@ -44,6 +48,7 @@ class Router(Switch):
 
         # Create multicast group in parent RIB
         if self.parent_router != None:
+            # We don't want to add a switch to the parent router's RIB, so we find the leaf router
             leaf_router = node if isinstance(node, Router) else node.trust_domain.router
             self.parent_router.create_multicast_group(group_name, leaf_router)
 
@@ -58,3 +63,32 @@ class Router(Switch):
 
     def get_nexthop(self, address):
         return self.rib_nexthop_entries[address]
+
+
+def main():
+    routerRoot = Router("A", None, None)
+
+    # Create trust domain A with one router and two switches
+    domainA = TrustDomain("A")
+    routerA = Router("A", routerRoot, domainA)
+    switch1 = Switch("1", domainA)
+    switch1.neighbors.add(routerA)
+    switch2 = Switch("2", domainA)
+    switch2.neighbors.add(routerA)
+
+    # Create trust domain B with one router and two switches
+    domainB = TrustDomain("B")
+    routerB = Router("B", routerRoot, domainB)
+    switch3 = Switch("3", domainB)
+    switch3.neighbors.add(routerB)
+    switch4 = Switch("4", domainB)
+    switch4.neighbors.add(routerB)
+
+    # Create multicast tree in domain A
+    routerA.create_multicast_group("group1", switch1)
+
+    print(routerRoot.rib_multicast_groups)
+    print(routerA.rib_multicast_groups)
+
+
+main()
