@@ -162,61 +162,53 @@ class Router(Node):
             (router, node) = message.content
             self.rib_add_ownership(router, node)
 
-    def find_node_by_name(self, name):
-        # Return the node object corresponding to the given name
-        for node in self.rib_nodes:
-            if node.name == name:
-                return node
-        return None
+    # Dijkstra's algorithm for finding next hop (thanks, ChatGPT)
+    def rib_query_next_hop(self, start, destination):
+        # Helper function
+        def backtrack_first_hop(start, destination, previous_nodes):
+            # Backtrack from destination to start, return the first hop
+            node = destination
+            while previous_nodes[node] != start:
+                node = previous_nodes[node]
 
-    def get_neighbors(self, node):
-        # Return a list of (neighbor, distance) pairs for a given node
-        return [(n2, dist) for n1, n2, dist in self.rib_edges if n1 == node] + [
-            (n1, dist) for n1, n2, dist in self.rib_edges if n2 == node
-        ]
+                # Handle case where no path exists
+                if node is None:
+                    return None
 
-    # Dijkstra's algorithm for finding the shortest path between two nodes. Thanks ChatGPT!
-    def rib_query_next_hop(self, source, destination):
-        # Create a priority queue to store (distance, node_name) pairs
-        pq = []
-        heapq.heappush(pq, (0, source.name))
+            return node
 
-        # Initialize distances to all nodes as infinity, except the source
-        distances = {node.name: float("infinity") for node in self.rib_nodes}
-        distances[source.name] = 0
+        # Initialize distance and previous node dictionaries
+        distances = {node: float("infinity") for node in self.rib_nodes}
+        previous_nodes = {node: None for node in self.rib_nodes}
 
-        # Initialize a dictionary to track the previous node on the shortest path
-        previous_nodes = {node.name: None for node in self.rib_nodes}
+        # Initialize the priority list
+        queue = [(0, start)]
+        distances[start] = 0
 
-        while pq:
-            current_distance, current_node_name = heapq.heappop(pq)
+        while queue:
+            # Find and remove the node with the smallest distance
+            current_distance, current_node = min(queue, key=lambda x: x[0])
+            queue.remove((current_distance, current_node))
 
-            # If we've reached the destination, reconstruct the path
-            if current_node_name == destination.name:
-                path = []
-                current_node = self.find_node_by_name(current_node_name)
-                while current_node:
-                    path.append(current_node)
-                    previous_node_name = previous_nodes[current_node.name]
-                    current_node = (
-                        self.find_node_by_name(previous_node_name)
-                        if previous_node_name
-                        else None
-                    )
-                path.reverse()
-                return path[1] if len(path) > 1 else None, distances[destination.name]
+            # If destination is reached, backtrack to find the first hop
+            if current_node == destination:
+                first_hop = backtrack_first_hop(start, destination, previous_nodes)
+                return first_hop, distances[destination]
 
-            current_node = self.find_node_by_name(current_node_name)
+            # Iterate over neighbors of the current node
+            for edge in self.rib_edges:
+                if current_node in edge:
+                    neighbor = edge[0] if current_node == edge[1] else edge[1]
+                    length = edge[2]
+                    new_distance = current_distance + length
 
-            # If a shorter path to a neighboring node is found, update its distance and previous node
-            for neighbor, distance in self.get_neighbors(current_node):
-                new_distance = current_distance + distance
-                if new_distance < distances[neighbor.name]:
-                    distances[neighbor.name] = new_distance
-                    previous_nodes[neighbor.name] = current_node.name
-                    heapq.heappush(pq, (new_distance, neighbor.name))
+                    # Update the distance if a shorter path is found
+                    if new_distance < distances[neighbor]:
+                        distances[neighbor] = new_distance
+                        previous_nodes[neighbor] = current_node
+                        queue.append((new_distance, neighbor))
 
-        return None, float("infinity")
+        return None, float("infinity")  # Path not found
 
     def rib_add_link(self, node1, node2, link_cost):
         self.rib_nodes.add(node1)
@@ -246,16 +238,16 @@ def main():
     routerRoot = Router("routerRoot", None)
 
     # Create trust domain A with router and two switches, and two clients for each switch
-    # routerA = Router("routerA", parent_router=routerRoot)
-    # routerA.add_neighbor(routerRoot)
-    # switch1 = Switch("switch1", parent_router=routerA)
-    # switch1.add_neighbor(routerA)
-    # switch2 = Switch("switch2", parent_router=routerA)
-    # switch2.add_neighbor(routerA)
-    # client1 = Client("client1", switch1)
-    # client2 = Client("client2", switch1)
-    # client3 = Client("client3", switch2)
-    # client4 = Client("client4", switch2)
+    routerA = Router("routerA", parent_router=routerRoot)
+    routerA.add_neighbor(routerRoot)
+    switch1 = Switch("switch1", parent_router=routerA)
+    switch1.add_neighbor(routerA)
+    switch2 = Switch("switch2", parent_router=routerA)
+    switch2.add_neighbor(routerA)
+    client1 = Client("client1", switch1)
+    client2 = Client("client2", switch1)
+    client3 = Client("client3", switch2)
+    client4 = Client("client4", switch2)
 
     # Create trust domain A with router and two switches, and two clients for each switch
     # Also add a switch between the two routers for the sake of it
