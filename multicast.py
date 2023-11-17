@@ -1,3 +1,24 @@
+from enum import Enum
+
+
+class MessageTypes(Enum):
+    RIB_QUERY_NEXT_HOP = 0
+    RIB_ADD_LINK = 1
+    RIB_ADD_OWNERSHIP = 2
+
+
+class Message:
+    def __init__(self, content, type: MessageTypes):
+        self.content = content
+        self.type: MessageTypes = type
+
+    def __str__(self):
+        return f"Message({self.type}, {self.content})"
+
+    def __repr__(self):
+        return f"Message({self.type}, {self.content})"
+
+
 class Node:
     def __init__(self, name, parent_router):
         self.name = name
@@ -6,6 +27,27 @@ class Node:
         self.routing_table = {self: (None, 0)}
 
     def get_next_hop(self, destination):
+        # If not in the same trust domain, send to parent router instead
+        if (
+            destination != self.parent_router
+            and self.parent_router != destination.parent_router
+        ):
+            return self.get_next_hop(self.parent_router)
+
+        if destination not in self.routing_table:
+            print(
+                f"Destination {destination} not in routing table of {self}. Querying RIB"
+            )
+
+            # Query RIB for next hop
+            message = Message(
+                content=destination, type=MessageTypes["RIB_QUERY_NEXT_HOP"]
+            )
+
+            (next_hop, distance) = self.send_message(self, self.parent_router, message)
+
+            self.routing_table[destination] = (next_hop, distance)
+
         return self.routing_table[destination][0]
 
     def add_neighbor(self, neighbor, link_cost=1, reverse=False):
@@ -30,24 +72,31 @@ class Node:
                     distance_from_neighbor + link_cost,
                 )
 
-        # Do if check to avoid infinite loop
+        # Do if check to avoid back-and-forth recursion
         if not reverse:
             # Register neighborship on the other side
             neighbor.add_neighbor(self, link_cost, reverse=True)
 
             # Notify RIB of the new link
-            next_hop = self.get_next_hop(destination=self.parent_router)
-            next_hop.rib_add_link(self, neighbor, link_cost)
+            message = Message(
+                content=(self, neighbor, link_cost), type=MessageTypes.RIB_ADD_LINK
+            )
+            self.send_message(self, self.parent_router, message)
 
-    # Forward the call to the next hop towards the RIB
-    def rib_add_link(self, node1, node2, link_cost):
-        next_hop = self.get_next_hop(destination=self.parent_router)
-        next_hop.rib_add_link(node1, node2, link_cost)
+    def send_message(self, source, destination, message):
+        next_hop = self.get_next_hop(destination=destination)
+        return next_hop.receive_message(source, destination, message)
 
-    # Forward the call to the next hop towards the RIB
-    def rib_add_ownership(self, node1, node2):
-        next_hop = self.get_next_hop(destination=self.parent_router)
-        next_hop.rib_add_ownership(node1, node2)
+    def receive_message(self, source, destination, message):
+        if self == destination:
+            # Handle message
+            self.handle_message(source, message)
+        else:
+            # Forward to next hop
+            self.send_message(source, destination, message)
+
+    def handle_message(self, source, message):
+        print(f"[{self}] Message from {source}: {message}")
 
     def __str__(self):
         return self.name
@@ -60,6 +109,9 @@ class Switch(Node):
     def __init__(self, name, parent_router):
         super().__init__(name, parent_router)
 
+    def handle_message(self, source, message):
+        super().handle_message(source, message)
+
 
 class Client(Node):
     def __init__(self, name, switch):
@@ -67,6 +119,9 @@ class Client(Node):
 
         # Register the switch as a neighbor
         self.add_neighbor(switch)
+
+    def handle_message(self, source, message):
+        super().handle_message(source, message)
 
 
 class Router(Node):
@@ -79,12 +134,28 @@ class Router(Node):
         self.rib_child_router_ownerships = {}
         self.rib_multicast_groups = {}
 
+    def handle_message(self, source, message):
+        super().handle_message(source, message)
+
+        if message.type == MessageTypes.RIB_ADD_LINK:
+            (node1, node2, link_cost) = message.content
+            self.rib_add_link(node1, node2, link_cost)
+
+        elif message.type == MessageTypes.RIB_ADD_OWNERSHIP:
+            (router, node) = message.content
+            self.rib_add_ownership(router, node)
+
     def rib_add_link(self, node1, node2, link_cost):
         self.rib_nodes.add(node1)
         self.rib_nodes.add(node2)
         self.rib_edges.add((node1, node2, link_cost))
 
-        self.rib_add_ownership(self, node1)
+        # Propagate ownership up the tree
+        if self.parent_router:
+            message = Message(
+                content=(self, node1), type=MessageTypes.RIB_ADD_OWNERSHIP
+            )
+            self.send_message(self, self.parent_router, message)
 
     def rib_add_ownership(self, router, node):
         if self != router:
@@ -94,8 +165,8 @@ class Router(Node):
 
         # Propagate ownership up the tree
         if self.parent_router:
-            next_hop = self.get_next_hop(destination=self.parent_router)
-            next_hop.rib_add_ownership(self, node)
+            message = Message(content=(self, node), type=MessageTypes.RIB_ADD_OWNERSHIP)
+            self.send_message(self, self.parent_router, message)
 
 
 def main():
@@ -127,6 +198,7 @@ def main():
     client6 = Client("client6", switch3)
     client7 = Client("client7", switch4)
     client8 = Client("client8", switch4)
+    # client8.send_message(client8, client7, Message("test", MessageTypes.RIB_ADD_LINK))
 
     print("done")
 
