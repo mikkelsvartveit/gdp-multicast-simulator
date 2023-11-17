@@ -36,12 +36,15 @@ class Node:
             neighbor.add_neighbor(self, link_cost, reverse=True)
 
             # Notify RIB of the new link
-            self.rib_add_link(self, neighbor, link_cost)
+            next_hop = self.get_next_hop(destination=self.parent_router)
+            next_hop.rib_add_link(self, neighbor, link_cost)
 
+    # Forward the call to the next hop towards the RIB
     def rib_add_link(self, node1, node2, link_cost):
         next_hop = self.get_next_hop(destination=self.parent_router)
         next_hop.rib_add_link(node1, node2, link_cost)
 
+    # Forward the call to the next hop towards the RIB
     def rib_add_ownership(self, node1, node2):
         next_hop = self.get_next_hop(destination=self.parent_router)
         next_hop.rib_add_ownership(node1, node2)
@@ -70,7 +73,7 @@ class Router(Node):
     def __init__(self, name, parent_router):
         super().__init__(name, parent_router)
 
-        # Stuff below here is the RIB (lives inside the router)
+        # Everything below here is the RIB (lives inside the router)
         self.rib_nodes = set()
         self.rib_edges = set()
         self.rib_child_router_ownerships = {}
