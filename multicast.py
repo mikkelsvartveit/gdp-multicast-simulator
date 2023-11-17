@@ -1,45 +1,35 @@
-import math
-
-
-class TrustDomain:
-    def __init__(self, name):
-        self.name = name
-        self.router = None
-
-    def __str__(self):
-        return self.name
-
-
 class Node:
-    def __init__(self, name, trust_domain):
+    def __init__(self, name, parent_router):
         self.name = name
-        self.trust_domain = trust_domain
+        self.parent_router = parent_router
         self.neighbors = set()
-        self.routing = {}
+        self.routing_table = {self: (None, 0)}
 
-        self.next_hop_to_rib = None
-        self.distance_to_rib = math.inf
-
-    def get_distance_to_rib(self):
-        return self.distance_to_rib
-
-    def add_neighbor(self, neighbor, link_cost=1):
+    def add_neighbor(self, neighbor, link_cost=1, reverse=False):
         self.neighbors.add(neighbor)
-        neighbor.neighbors.add(self)
 
-        # Check if the new neighbor is a better path to the RIB
+        # Add the neighbor itself to routing table unless there is already a shorter path to it
         if (
-            neighbor.get_distance_to_rib() + link_cost < self.get_distance_to_rib()
-            or self.next_hop_to_rib == None
+            neighbor not in self.routing_table
+            or link_cost < self.routing_table[neighbor][1]
         ):
-            self.next_hop_to_rib = neighbor
-            self.distance_to_rib = neighbor.get_distance_to_rib() + link_cost
+            self.routing_table[neighbor] = (neighbor, link_cost)
 
-        # Notify the RIB that the link has been added
-        self.rib_add_link(self, neighbor, link_cost)
+        # Check if the new neighbor has better paths to other nodes
+        for destination, (_, distance_from_neighbor) in neighbor.routing_table.items():
+            if (
+                destination not in self.routing_table
+                or distance_from_neighbor + link_cost
+                < self.routing_table[destination][1]
+            ):
+                self.routing_table[destination] = (
+                    neighbor,
+                    distance_from_neighbor + link_cost,
+                )
 
-    def rib_add_link(self, node1, node2, link_cost):
-        self.next_hop_to_rib.rib_add_link(node1, node2, link_cost)
+        # Register the neighborship on the other side. Do if check to avoid infinite loop
+        if not reverse:
+            neighbor.add_neighbor(self, link_cost, reverse=True)
 
     def __str__(self):
         return self.name
@@ -50,111 +40,45 @@ class Node:
 
 class Client(Node):
     def __init__(self, name, switch):
-        super().__init__(name, switch.trust_domain)
-        if switch != None:
-            self.switch = switch
-            self.next_hop_to_rib = switch
-            switch.add_neighbor(self)
+        super().__init__(name, switch.parent_router)
 
-    def __str__(self):
-        return self.name
+        # Register the switch as a neighbor
+        self.add_neighbor(switch)
+        # Register this client as a neighbor in the switch
+        switch.add_neighbor(self)
 
 
-class Router(Node):  # A Router is just a Switch with additional functionality
-    def __init__(self, name, parent_router, trust_domain):
-        super().__init__(name, trust_domain)
-
-        if trust_domain:
-            trust_domain.router = self
-
-        self.parent_router = parent_router
-        self.children = set()
+class Router(Node):
+    def __init__(self, name, parent_router):
+        super().__init__(name, parent_router)
 
         # Stuff below here is the RIB (lives inside the router)
-        self.rib_multicast_groups = {}
         self.rib_nodes = set()
         self.rib_edges = set()
-        # self.rib_nexthop_entries = {}
-
-    def add_neighbor(self, neighbor, link_cost=1):
-        self.neighbors.add(neighbor)
-        neighbor.neighbors.add(self)
-
-        # Check if the new neighbor is a better path to the parent RIB
-        # However, it can only be a path to the parent RIB if it is not part of the same trust domain
-        if neighbor.trust_domain != self.trust_domain and (
-            neighbor.get_distance_to_rib() + link_cost < self.distance_to_rib
-            or self.next_hop_to_rib == None
-        ):
-            self.next_hop_to_rib = neighbor
-            self.distance_to_rib = neighbor.get_distance_to_rib() + link_cost
-
-        # Notify the parent RIB that the link has been added
-        self.next_hop_to_rib.rib_add_link(self, neighbor, link_cost)
-
-    def get_distance_to_rib(self):
-        return 0
+        self.rib_child_router_ownerships = {}
+        self.rib_multicast_groups = {}
 
     def rib_add_link(self, node1, node2, link_cost):
         self.rib_nodes.add(node1)
         self.rib_nodes.add(node2)
         self.rib_edges.add((node1, node2, link_cost))
 
-    # def create_multicast_group(self, group_name, node):
-    #     # Create new multicast group in RIB
-    #     self.rib_multicast_groups[group_name] = set([node])
-
-    #     # Create multicast group in parent RIB
-    #     if self.parent_router != None:
-    #         # We don't want to add a switch to the parent router's RIB, so we find the leaf router
-    #         leaf_router = node if isinstance(node, Router) else node.trust_domain.router
-    #         self.parent_router.create_multicast_group(group_name, leaf_router)
-
-    # def add_multicast_group_member(self, group, node):
-    #     if node not in self.rib_multicast_groups[group]:
-    #         self.rib_multicast_groups[group].add(node)
-
-    #         # Propagate to parent
-    #         leaf_router = node if isinstance(node, Router) else node.trust_domain.router
-    #         if self.parent_router != None:
-    #             self.parent_router.add_multicast_group_member(group, leaf_router)
-
 
 def main():
-    routerRoot = Router("A", None, None)
+    routerRoot = Router("A", None)
 
-    # Create trust domain A with one router and two switches, and two clients for each switch
-    domainA = TrustDomain("domainA")
-    routerA = Router("routerA", routerRoot, domainA)
-    switch1 = Node("switch1", domainA)
+    # Create trust domain with router and two switches, and two clients for each switch
+    routerA = Router("routerA", parent_router=routerRoot)
+    switch1 = Node("switch1", parent_router=routerA)
     switch1.add_neighbor(routerA)
-    switch2 = Node("switch2", domainA)
+    switch2 = Node("switch2", parent_router=routerA)
     switch2.add_neighbor(routerA)
     client1 = Client("client1", switch1)
     client2 = Client("client2", switch1)
     client3 = Client("client3", switch2)
     client4 = Client("client4", switch2)
 
-    # Create trust domain B with one router and two switches, and two clients for each switch
-    domainB = TrustDomain("B")
-    routerB = Router("routerB", routerRoot, domainB)
-    switch3 = Node("switch3", domainB)
-    switch3.add_neighbor(routerB)
-    switch4 = Node("switch4", domainB)
-    switch4.add_neighbor(routerB)
-    client5 = Client("client5", switch3)
-    client6 = Client("client6", switch3)
-    client7 = Client("client7", switch4)
-    client8 = Client("client8", switch4)
-
-    # Create multicast tree in domain A
-    # routerA.create_multicast_group("group1", switch1)
-
-    # print(routerRoot.rib_multicast_groups)
-    # print(routerA.rib_multicast_groups)
-
-    print(routerRoot.rib_nodes)
-    print(routerRoot.rib_edges)
+    print("done")
 
 
 main()
