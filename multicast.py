@@ -5,6 +5,9 @@ class Node:
         self.neighbors = set()
         self.routing_table = {self: (None, 0)}
 
+    def get_next_hop(self, destination):
+        return self.routing_table[destination][0]
+
     def add_neighbor(self, neighbor, link_cost=1, reverse=False):
         self.neighbors.add(neighbor)
 
@@ -27,9 +30,21 @@ class Node:
                     distance_from_neighbor + link_cost,
                 )
 
-        # Register the neighborship on the other side. Do if check to avoid infinite loop
+        # Do if check to avoid infinite loop
         if not reverse:
+            # Register neighborship on the other side
             neighbor.add_neighbor(self, link_cost, reverse=True)
+
+            # Notify RIB of the new link
+            self.rib_add_link(self, neighbor, link_cost)
+
+    def rib_add_link(self, node1, node2, link_cost):
+        next_hop = self.get_next_hop(destination=self.parent_router)
+        next_hop.rib_add_link(node1, node2, link_cost)
+
+    def rib_add_ownership(self, node1, node2):
+        next_hop = self.get_next_hop(destination=self.parent_router)
+        next_hop.rib_add_ownership(node1, node2)
 
     def __str__(self):
         return self.name
@@ -38,14 +53,17 @@ class Node:
         return self.name
 
 
+class Switch(Node):
+    def __init__(self, name, parent_router):
+        super().__init__(name, parent_router)
+
+
 class Client(Node):
     def __init__(self, name, switch):
         super().__init__(name, switch.parent_router)
 
         # Register the switch as a neighbor
         self.add_neighbor(switch)
-        # Register this client as a neighbor in the switch
-        switch.add_neighbor(self)
 
 
 class Router(Node):
@@ -63,20 +81,49 @@ class Router(Node):
         self.rib_nodes.add(node2)
         self.rib_edges.add((node1, node2, link_cost))
 
+        self.rib_add_ownership(self, node1)
+
+    def rib_add_ownership(self, router, node):
+        if self != router:
+            if not router in self.rib_child_router_ownerships:
+                self.rib_child_router_ownerships[router] = set()
+            self.rib_child_router_ownerships[router].add(node)
+
+        # Propagate ownership up the tree
+        if self.parent_router:
+            next_hop = self.get_next_hop(destination=self.parent_router)
+            next_hop.rib_add_ownership(self, node)
+
 
 def main():
-    routerRoot = Router("A", None)
+    routerRoot = Router("routerRoot", None)
 
-    # Create trust domain with router and two switches, and two clients for each switch
+    # Create trust domain A with router and two switches, and two clients for each switch
     routerA = Router("routerA", parent_router=routerRoot)
-    switch1 = Node("switch1", parent_router=routerA)
+    routerA.add_neighbor(routerRoot)
+    switch1 = Switch("switch1", parent_router=routerA)
     switch1.add_neighbor(routerA)
-    switch2 = Node("switch2", parent_router=routerA)
+    switch2 = Switch("switch2", parent_router=routerA)
     switch2.add_neighbor(routerA)
     client1 = Client("client1", switch1)
     client2 = Client("client2", switch1)
     client3 = Client("client3", switch2)
     client4 = Client("client4", switch2)
+
+    # Create trust domain A with router and two switches, and two clients for each switch
+    # Also add a switch between the two routers for the sake of it
+    switchBridge = Switch("switchBridge", parent_router=routerRoot)
+    switchBridge.add_neighbor(routerRoot)
+    routerB = Router("routerB", parent_router=routerRoot)
+    routerB.add_neighbor(switchBridge)
+    switch3 = Switch("switch3", parent_router=routerB)
+    switch3.add_neighbor(routerB)
+    switch4 = Switch("switch4", parent_router=routerA)
+    switch4.add_neighbor(routerA)
+    client5 = Client("client5", switch3)
+    client6 = Client("client6", switch3)
+    client7 = Client("client7", switch4)
+    client8 = Client("client8", switch4)
 
     print("done")
 
