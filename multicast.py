@@ -38,7 +38,7 @@ class Node:
 
         if destination not in self.routing_table:
             print(
-                f"Destination {destination} not in routing table of {self}. Querying RIB"
+                f"[{self}] {destination} not in routing table of {self}. Querying RIB..."
             )
 
             # Query RIB for next hop
@@ -136,7 +136,7 @@ class Router(Node):
     def get_next_hop(self, destination):
         if destination not in self.routing_table:
             print(
-                f"Destination {destination} not in routing table of {self}. Querying RIB"
+                f"[{self}] {destination} not in routing table of {self}. Querying RIB..."
             )
 
             # Query RIB for next hop
