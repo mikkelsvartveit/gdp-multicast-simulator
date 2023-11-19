@@ -1,12 +1,13 @@
 from enum import Enum
-import heapq
 
 
 class MessageTypes(Enum):
-    RIB_QUERY_NEXT_HOP = 0
+    PING = 0
     RIB_ADD_LINK = 1
     RIB_ADD_OWNERSHIP = 2
-    PING = 3
+    RIB_QUERY_NEXT_HOP = 3
+    MULTICAST_CREATE_GROUP = 4
+    MULTICAST_JOIN_GROUP = 5
 
 
 class Message:
@@ -29,13 +30,6 @@ class Node:
         self.routing_table = {self: (None, 0)}
 
     def get_next_hop(self, destination):
-        # If not in the same trust domain, send to parent router instead
-        # if (
-        #     destination != self.parent_router
-        #     and self.parent_router != destination.parent_router
-        # ):
-        #     return self.get_next_hop(self.parent_router)
-
         if destination not in self.routing_table:
             print(
                 f"[{self}] {destination} not in routing table of {self}. Querying RIB..."
