@@ -30,11 +30,11 @@ class Node:
 
     def get_next_hop(self, destination):
         # If not in the same trust domain, send to parent router instead
-        if (
-            destination != self.parent_router
-            and self.parent_router != destination.parent_router
-        ):
-            return self.get_next_hop(self.parent_router)
+        # if (
+        #     destination != self.parent_router
+        #     and self.parent_router != destination.parent_router
+        # ):
+        #     return self.get_next_hop(self.parent_router)
 
         if destination not in self.routing_table:
             print(
@@ -50,7 +50,7 @@ class Node:
 
             self.routing_table[destination] = (next_hop, distance)
 
-        return self.routing_table[destination][0]
+        return self.routing_table[destination]
 
     def add_neighbor(self, neighbor, link_cost=1, reverse=False):
         self.neighbors.add(neighbor)
@@ -86,7 +86,7 @@ class Node:
             self.send_message(self, self.parent_router, message)
 
     def send_message(self, source, destination, message):
-        next_hop = self.get_next_hop(destination=destination)
+        next_hop = self.get_next_hop(destination=destination)[0]
         return next_hop.receive_message(source, destination, message)
 
     def receive_message(self, source, destination, message):
@@ -144,7 +144,7 @@ class Router(Node):
 
             self.routing_table[destination] = (next_hop, distance)
 
-        return self.routing_table[destination][0]
+        return self.routing_table[destination]
 
     def handle_message(self, source, message):
         super().handle_message(source, message)
@@ -208,6 +208,15 @@ class Router(Node):
                         previous_nodes[neighbor] = current_node
                         queue.append((new_distance, neighbor))
 
+        # Check if the destination is owned by a child router
+        for router, nodes in self.rib_child_router_ownerships.items():
+            if destination in nodes:
+                return self.rib_query_next_hop(start, router)
+
+        # Send to parent router instead if no path is found
+        if self.parent_router:
+            return self.get_next_hop(self.parent_router)
+
         return None, float("infinity")  # Path not found
 
     def rib_add_link(self, node1, node2, link_cost):
@@ -263,8 +272,10 @@ def main():
     client6 = Client("client6", switch3)
     client7 = Client("client7", switch4)
     client8 = Client("client8", switch4)
-    client8.send_message(client8, client5, Message("Hello World!", MessageTypes.PING))
-    client8.send_message(client8, client5, Message("Hello World!", MessageTypes.PING))
+
+    # Send two cross-domain messages
+    client1.send_message(client1, client8, Message("Hello World!", MessageTypes.PING))
+    client8.send_message(client8, client1, Message("Hello World!", MessageTypes.PING))
 
     print("done")
 
