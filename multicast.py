@@ -31,9 +31,7 @@ class Node:
 
     def get_next_hop(self, destination):
         if destination not in self.routing_table:
-            print(
-                f"[{self}] {destination} not in routing table of {self}. Querying RIB..."
-            )
+            print(f"[{self}] {destination} not in routing table. Querying RIB...")
 
             # Query RIB for next hop
             message = Message(
@@ -116,6 +114,14 @@ class Client(Node):
     def handle_message(self, source, message):
         super().handle_message(source, message)
 
+    def create_multicast_group(self, group_name):
+        message = Message(content=group_name, type=MessageTypes.MULTICAST_CREATE_GROUP)
+        self.send_message(self, self.parent_router, message)
+
+    def join_multicast_group(self, group_name):
+        message = Message(content=group_name, type=MessageTypes.MULTICAST_JOIN_GROUP)
+        response = self.send_message(self, self.parent_router, message)
+
 
 class Router(Node):
     def __init__(self, name, parent_router):
@@ -156,21 +162,16 @@ class Router(Node):
             (router, node) = message.content
             self.rib_add_ownership(router, node)
 
+        elif message.type == MessageTypes.MULTICAST_CREATE_GROUP:
+            group_name = message.content
+            self.rib_create_multicast_group(source, group_name)
+
+        elif message.type == MessageTypes.MULTICAST_JOIN_GROUP:
+            group_name = message.content
+            self.rib_join_multicast_group(source, group_name)
+
     # Dijkstra's algorithm for finding next hop (thanks, ChatGPT)
     def rib_query_next_hop(self, start, destination):
-        # Helper function
-        def backtrack_first_hop(start, destination, previous_nodes):
-            # Backtrack from destination to start, return the first hop
-            node = destination
-            while previous_nodes[node] != start:
-                node = previous_nodes[node]
-
-                # Handle case where no path exists
-                if node is None:
-                    return None
-
-            return node
-
         # Initialize distance and previous node dictionaries
         distances = {node: float("infinity") for node in self.rib_nodes}
         previous_nodes = {node: None for node in self.rib_nodes}
@@ -213,6 +214,42 @@ class Router(Node):
 
         return None, float("infinity")  # Path not found
 
+    # Returns the full shortest path (a list of edges) from 'start' to any of the nodes in 'destinations'
+    def rib_query_multicast_path(self, start, destinations):
+        # Initialize distance and previous node dictionaries
+        distances = {node: float("infinity") for node in self.rib_nodes}
+        previous_nodes = {node: None for node in self.rib_nodes}
+
+        # Initialize the priority list
+        queue = [(0, start)]
+        distances[start] = 0
+
+        while queue:
+            # Find and remove the node with the smallest distance
+            current_distance, current_node = min(queue, key=lambda x: x[0])
+            queue.remove((current_distance, current_node))
+
+            # If a destination is reached, backtrack to find the full path as edges
+            if current_node in destinations:
+                return backtrack_full_path(
+                    start, current_node, previous_nodes, self.rib_edges
+                )
+
+            # Iterate over neighbors of the current node
+            for edge in self.rib_edges:
+                if current_node in edge:
+                    neighbor = edge[0] if current_node == edge[1] else edge[1]
+                    length = edge[2]
+                    new_distance = current_distance + length
+
+                    # Update the distance if a shorter path is found
+                    if new_distance < distances[neighbor]:
+                        distances[neighbor] = new_distance
+                        previous_nodes[neighbor] = current_node
+                        queue.append((new_distance, neighbor))
+
+        return None  # Path not found to any destination
+
     def rib_add_link(self, node1, node2, link_cost):
         self.rib_nodes.add(node1)
         self.rib_nodes.add(node2)
@@ -236,6 +273,94 @@ class Router(Node):
             message = Message(content=(self, node), type=MessageTypes.RIB_ADD_OWNERSHIP)
             self.send_message(self, self.parent_router, message)
 
+    def rib_create_multicast_group(self, creator, group_name):
+        self.rib_multicast_groups[group_name] = {
+            "members": set([creator]),
+            "nodes": set([creator]),
+            "edges": set(),
+        }
+
+        # Propagate group creation up the tree
+        if self.parent_router:
+            message = Message(
+                content=group_name, type=MessageTypes.MULTICAST_CREATE_GROUP
+            )
+            self.send_message(self, self.parent_router, message)
+
+    def rib_join_multicast_group(self, node, group_name):
+        # If this RIB doesn't know about the multicast group, forward to parent router
+        if not group_name in self.rib_multicast_groups:
+            if not self.parent_router:
+                print(f"Could not find multicast group '{group_name}'!")
+                return
+
+            message = Message(
+                content=group_name, type=MessageTypes.MULTICAST_JOIN_GROUP
+            )
+            self.send_message(self, self.parent_router, message)
+
+            self.rib_multicast_groups[group_name] = {
+                "members": set(),
+                "nodes": set(),
+                "edges": set(),
+            }
+
+        self.rib_multicast_groups[group_name]["members"].add(node)
+
+        if self.rib_multicast_groups[group_name]["nodes"]:
+            # Find edges that connects the node to the multicast tree
+            nodes, edges = self.rib_query_multicast_path(
+                node, self.rib_multicast_groups[group_name]["nodes"]
+            )
+
+            # Add nodes and edges to the multicast tree
+            self.rib_multicast_groups[group_name]["nodes"].update(nodes)
+            self.rib_multicast_groups[group_name]["edges"].update(edges)
+
+        self.rib_multicast_groups[group_name]["nodes"].add(node)
+
+
+# Helper function
+def backtrack_first_hop(start, destination, previous_nodes):
+    # Backtrack from destination to start, return the first hop
+    node = destination
+    while previous_nodes[node] != start:
+        node = previous_nodes[node]
+
+        # Handle case where no path exists
+        if node is None:
+            return None
+
+    return node
+
+
+# Helper function
+def backtrack_full_path(start, destination, previous_nodes, edges):
+    path_edges = []
+    path_nodes = {start, destination}
+    node = destination
+
+    while node != start:
+        prev_node = previous_nodes[node]
+        if prev_node is None:
+            return None  # In case the path is broken
+
+        # Add the node to the path nodes set
+        path_nodes.add(prev_node)
+
+        # Find the edge that connects the current node and the previous node
+        for edge in edges:
+            if (prev_node in edge) and (node in edge):
+                path_edges.append(edge)
+                break
+
+        node = prev_node
+
+    return (
+        path_nodes,
+        path_edges[::-1],
+    )  # Return the path as nodes and edges in the correct order from start to destination
+
 
 def main():
     routerRoot = Router("routerRoot", None)
@@ -251,6 +376,10 @@ def main():
     client2 = Client("client2", switch1)
     client3 = Client("client3", switch2)
     client4 = Client("client4", switch2)
+    # switchBetween1and4 = Switch("switchBetween1and4", parent_router=routerA)
+    # switchBetween1and4.add_neighbor(client1)
+    # switchBetween1and4.add_neighbor(client4)
+    # switchBetween1and4.add_neighbor(switch1)
 
     # Create trust domain A with router and two switches, and two clients for each switch
     # Also add a switch between the two routers for the sake of it
@@ -268,8 +397,11 @@ def main():
     client8 = Client("client8", switch4)
 
     # Send two cross-domain messages
-    client1.send_message(client1, client8, Message("Hello World!", MessageTypes.PING))
-    client8.send_message(client8, client1, Message("Hello World!", MessageTypes.PING))
+    # client1.send_message(client1, client8, Message("Hello World!", MessageTypes.PING))
+    # client8.send_message(client8, client1, Message("Hello World!", MessageTypes.PING))
+    client1.create_multicast_group("group1")
+    client4.join_multicast_group("group1")
+    client8.join_multicast_group("group1")
 
     print("done")
 
