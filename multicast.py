@@ -1,5 +1,8 @@
 from enum import Enum
 
+# Enable to print every message received at any node. Disable to only print messages received at clients.
+DEBUG = False
+
 
 class MessageTypes(Enum):
     PING = 0
@@ -8,6 +11,7 @@ class MessageTypes(Enum):
     RIB_QUERY_NEXT_HOP = 3
     MULTICAST_CREATE_GROUP = 4
     MULTICAST_JOIN_GROUP = 5
+    RIB_QUERY_NEXT_MULTICAST_HOPS = 6
 
 
 class Message:
@@ -28,10 +32,11 @@ class Node:
         self.parent_router = parent_router
         self.neighbors = set()
         self.routing_table = {self: (None, 0)}
+        self.multicast_routing_table = {}
 
     def get_next_hop(self, destination):
         if destination not in self.routing_table:
-            print(f"[{self}] {destination} not in routing table. Querying RIB...")
+            # print(f"[{self}] {destination} not in routing table. Querying RIB...")
 
             # Query RIB for next hop
             message = Message(
@@ -43,6 +48,24 @@ class Node:
             self.routing_table[destination] = (next_hop, distance)
 
         return self.routing_table[destination]
+
+    def get_next_multicast_hops(self, multicast_group):
+        if multicast_group not in self.multicast_routing_table:
+            # print(
+            #     f"[{self}] {multicast_group} not in multicast routing table. Querying RIB..."
+            # )
+
+            # Query RIB for next hop
+            message = Message(
+                content=multicast_group,
+                type=MessageTypes["RIB_QUERY_NEXT_MULTICAST_HOPS"],
+            )
+
+            next_hops = self.send_message(self, self.parent_router, message)
+
+            self.multicast_routing_table[multicast_group] = next_hops
+
+        return self.multicast_routing_table[multicast_group]
 
     def add_neighbor(self, neighbor, link_cost=1, reverse=False):
         self.neighbors.add(neighbor)
@@ -89,8 +112,33 @@ class Node:
             # Forward to next hop
             return self.send_message(source, destination, message)
 
+    def send_multicast_message(self, source, multicast_group, message, visited=set()):
+        next_hops = self.get_next_multicast_hops(multicast_group)
+        updated_visited = visited.copy()
+        updated_visited.add(self)
+        return [
+            next_hop.receive_multicast_message(
+                source, multicast_group, message, updated_visited
+            )
+            for next_hop in next_hops
+            if next_hop not in visited
+        ]
+
+    def receive_multicast_message(self, source, multicast_group, message, visited):
+        if (
+            hasattr(self, "multicast_groups")
+            and multicast_group in self.multicast_groups
+        ):
+            # Handle message
+            return self.handle_message(source, message)
+        else:
+            # Forward to next hops
+            return self.send_multicast_message(
+                source, multicast_group, message, visited
+            )
+
     def handle_message(self, source, message):
-        print(f"[{self}] Message from {source}: {message}")
+        print(f"[{self}] Received message from {source}: {message}")
 
     def __str__(self):
         return self.name
@@ -107,6 +155,7 @@ class Switch(Node):
 class Client(Node):
     def __init__(self, name, switch):
         super().__init__(name, switch.parent_router)
+        self.multicast_groups = set()
 
         # Register the switch as a neighbor
         self.add_neighbor(switch)
@@ -117,10 +166,12 @@ class Client(Node):
     def create_multicast_group(self, group_name):
         message = Message(content=group_name, type=MessageTypes.MULTICAST_CREATE_GROUP)
         self.send_message(self, self.parent_router, message)
+        self.multicast_groups.add(group_name)
 
     def join_multicast_group(self, group_name):
         message = Message(content=group_name, type=MessageTypes.MULTICAST_JOIN_GROUP)
         response = self.send_message(self, self.parent_router, message)
+        self.multicast_groups.add(group_name)
 
 
 class Router(Node):
@@ -135,9 +186,9 @@ class Router(Node):
 
     def get_next_hop(self, destination):
         if destination not in self.routing_table:
-            print(
-                f"[{self}] {destination} not in routing table of {self}. Querying RIB..."
-            )
+            # print(
+            #     f"[{self}] {destination} not in routing table of {self}. Querying RIB..."
+            # )
 
             # Query RIB for next hop
             (next_hop, distance) = self.rib_query_next_hop(self, destination)
@@ -146,13 +197,32 @@ class Router(Node):
 
         return self.routing_table[destination]
 
+    def get_next_multicast_hops(self, multicast_group):
+        if multicast_group not in self.multicast_routing_table:
+            # print(
+            #     f"[{self}] {multicast_group} not in multicast routing table. Querying RIB..."
+            # )
+
+            # Query RIB for next hop
+            next_hops = self.rib_query_next_multicast_hops(self, multicast_group)
+
+            self.multicast_routing_table[multicast_group] = next_hops
+
+        return self.multicast_routing_table[multicast_group]
+
     def handle_message(self, source, message):
-        super().handle_message(source, message)
+        if DEBUG:
+            super().handle_message(source, message)
 
         if message.type == MessageTypes.RIB_QUERY_NEXT_HOP:
             destination = message.content
             next_hop, distance = self.rib_query_next_hop(source, destination)
             return (next_hop, distance)
+
+        elif message.type == MessageTypes.RIB_QUERY_NEXT_MULTICAST_HOPS:
+            multicast_group = message.content
+            next_hops = self.rib_query_next_multicast_hops(source, multicast_group)
+            return next_hops
 
         elif message.type == MessageTypes.RIB_ADD_LINK:
             (node1, node2, link_cost) = message.content
@@ -212,10 +282,38 @@ class Router(Node):
         if self.parent_router:
             return self.get_next_hop(self.parent_router)
 
-        return None, float("infinity")  # Path not found
+        return []  # Path not found
+
+    def rib_query_next_multicast_hops(self, start, multicast_group_name):
+        if not multicast_group_name in self.rib_multicast_groups:
+            print(f"[{self}] Could not find multicast group '{multicast_group_name}'!")
+            return
+
+        # if not start in self.rib_multicast_groups[multicast_group_name]["nodes"]:
+        #     print(f"[{self}] {start} not in multicast group '{multicast_group_name}'!")
+        #     return
+
+        multicast_group = self.rib_multicast_groups[multicast_group_name]
+
+        next_hops = [
+            n2 if n1 == start else n1
+            for n1, n2, _ in multicast_group["edges"]
+            if start in (n1, n2)
+        ]
+
+        # If the node is a router, also check the parent RIB for potenital links outside the domain
+        if start == self and self.parent_router:
+            message = Message(
+                content=multicast_group_name,
+                type=MessageTypes.RIB_QUERY_NEXT_MULTICAST_HOPS,
+            )
+            external_next_hops = self.send_message(self, self.parent_router, message)
+            next_hops.extend(external_next_hops)
+
+        return next_hops
 
     # Returns the full shortest path (a list of edges) from 'start' to any of the nodes in 'destinations'
-    def rib_query_multicast_path(self, start, destinations):
+    def rib_query_join_multicast_group_path(self, start, destinations):
         # Initialize distance and previous node dictionaries
         distances = {node: float("infinity") for node in self.rib_nodes}
         previous_nodes = {node: None for node in self.rib_nodes}
@@ -305,11 +403,12 @@ class Router(Node):
                 "edges": set(),
             }
 
-        self.rib_multicast_groups[group_name]["members"].add(node)
+            # Router adds itself to the multicast tree
+            self.rib_multicast_groups[group_name]["nodes"].add(self)
 
         if self.rib_multicast_groups[group_name]["nodes"]:
             # Find edges that connects the node to the multicast tree
-            nodes, edges = self.rib_query_multicast_path(
+            nodes, edges = self.rib_query_join_multicast_group_path(
                 node, self.rib_multicast_groups[group_name]["nodes"]
             )
 
@@ -318,6 +417,7 @@ class Router(Node):
             self.rib_multicast_groups[group_name]["edges"].update(edges)
 
         self.rib_multicast_groups[group_name]["nodes"].add(node)
+        self.rib_multicast_groups[group_name]["members"].add(node)
 
 
 # Helper function
@@ -363,6 +463,9 @@ def backtrack_full_path(start, destination, previous_nodes, edges):
 
 
 def main():
+    # Enable to print every message received at any node. Disable to only print messages received at clients.
+    global DEBUG
+
     routerRoot = Router("routerRoot", None)
 
     # Create trust domain A with router and two switches, and two clients for each switch
@@ -376,10 +479,6 @@ def main():
     client2 = Client("client2", switch1)
     client3 = Client("client3", switch2)
     client4 = Client("client4", switch2)
-    # switchBetween1and4 = Switch("switchBetween1and4", parent_router=routerA)
-    # switchBetween1and4.add_neighbor(client1)
-    # switchBetween1and4.add_neighbor(client4)
-    # switchBetween1and4.add_neighbor(switch1)
 
     # Create trust domain A with router and two switches, and two clients for each switch
     # Also add a switch between the two routers for the sake of it
@@ -399,9 +498,18 @@ def main():
     # Send two cross-domain messages
     # client1.send_message(client1, client8, Message("Hello World!", MessageTypes.PING))
     # client8.send_message(client8, client1, Message("Hello World!", MessageTypes.PING))
+
+    # Multicast example
     client1.create_multicast_group("group1")
+    client2.join_multicast_group("group1")
     client4.join_multicast_group("group1")
     client8.join_multicast_group("group1")
+    client1.send_multicast_message(
+        client1, "group1", Message("Hello from client1!", MessageTypes.PING)
+    )
+    client8.send_multicast_message(
+        client8, "group1", Message("Hello from client8!", MessageTypes.PING)
+    )
 
     print("done")
 
