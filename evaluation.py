@@ -9,6 +9,9 @@ TOTAL_EDGE_WEIGHT = 0
 # TONY_EVALUATION
 TOTAL_RECEIVED_MESSAGES = 0
 
+# TONY_EVALUATION
+MULTICAST = True
+
 class MessageTypes(Enum):
     PING = 0
     RIB_ADD_LINK = 1
@@ -121,7 +124,7 @@ class Node:
 
         # TONY_EVALUATION
         global TOTAL_EDGE_WEIGHT
-        TOTAL_EDGE_WEIGHT += 2
+        TOTAL_EDGE_WEIGHT += 10
 
         return next_hop.receive_message(source, destination, message)
 
@@ -549,40 +552,82 @@ def main():
 
     routerRoot = Router("routerRoot", None)
 
+    # Multicast
     # TONY_EVALUATION
-    routerA = Router("routerA", parent_router=routerRoot)
-    routerA.add_neighbor(routerRoot)
-    switch1A = Switch("switch1A", parent_router=routerA)
-    switch1A.add_neighbor(routerA)
-    switch2A = Switch("switch2A", parent_router=routerA)
-    switch2A.add_neighbor(routerA)
-    client1A = Client("client1A", switch1A)
-    client2A = Client("client2A", switch1A)
-    client3A = Client("client3A", switch2A)
-    client4A = Client("client4A", switch2A)
+    if MULTICAST:
+        routerA = Router("routerA", parent_router=routerRoot)
+        routerA.add_neighbor(routerRoot)
+        switch1A = Switch("switch1A", parent_router=routerA)
+        switch1A.add_neighbor(routerA)
+        switch2A = Switch("switch2A", parent_router=routerA)
+        switch2A.add_neighbor(routerA)
+        client1A = Client("client1A", switch1A)
+        client2A = Client("client2A", switch1A)
+        client3A = Client("client3A", switch2A)
+        client4A = Client("client4A", switch2A)
+        client1A.create_multicast_group("group1")
+        client2A.join_multicast_group("group1")
+        client3A.join_multicast_group("group1")
+        client4A.join_multicast_group("group1")
 
-    client1A.send_message(client1A, client2A, Message("Hello from client1A!", MessageTypes.PING))
-    client1A.send_message(client1A, client3A, Message("Hello from client1A!", MessageTypes.PING))
-    client1A.send_message(client1A, client4A, Message("Hello from client1A!", MessageTypes.PING))
+        # TONY_EVALUATION
+        # Create trust domain A with router and two switches, and two clients for each switch
+        for i in range(0, 24):
+            router = Router(f"router{i}", routerRoot)
+            router.add_neighbor(routerRoot)
+            switch1 = Switch(f"switchA{i}", router)
+            switch1.add_neighbor(router)
+            switch2 = Switch(f"switchB{i}", router)
+            switch2.add_neighbor(router)
+            client1 = Client(f"clientA{i}", switch1)
+            client2 = Client(f"clientB{i}", switch1)
+            client3 = Client(f"clientC{i}", switch2)
+            client4 = Client(f"clientD{i}", switch2)
+            client1.join_multicast_group("group1")
+            client2.join_multicast_group("group1")
+            client3.join_multicast_group("group1")
+            client4.join_multicast_group("group1")
 
+        client1A.send_multicast_message(
+            client1A, "group1", Message("Hello from client1A!", MessageTypes.PING)
+        )
+
+    # Unicast
     # TONY_EVALUATION
-    # Create trust domain A with router and two switches, and two clients for each switch
-    for i in range(0, 24):
-        router = Router(f"router{i}", routerRoot)
-        router.add_neighbor(routerRoot)
-        switch1 = Switch(f"switchA{i}", router)
-        switch1.add_neighbor(router)
-        switch2 = Switch(f"switchB{i}", router)
-        switch2.add_neighbor(router)
-        client1 = Client(f"clientA{i}", switch1)
-        client2 = Client(f"clientB{i}", switch1)
-        client3 = Client(f"clientC{i}", switch2)
-        client4 = Client(f"clientD{i}", switch2)
+    if not MULTICAST:
+        routerA = Router("routerA", parent_router=routerRoot)
+        routerA.add_neighbor(routerRoot)
+        switch1A = Switch("switch1A", parent_router=routerA)
+        switch1A.add_neighbor(routerA)
+        switch2A = Switch("switch2A", parent_router=routerA)
+        switch2A.add_neighbor(routerA)
+        client1A = Client("client1A", switch1A)
+        client2A = Client("client2A", switch1A)
+        client3A = Client("client3A", switch2A)
+        client4A = Client("client4A", switch2A)
 
-        client1A.send_message(client1A, client1, Message("Hello from client1A!", MessageTypes.PING))
-        client1A.send_message(client1A, client2, Message("Hello from client1A!", MessageTypes.PING))
-        client1A.send_message(client1A, client3, Message("Hello from client1A!", MessageTypes.PING))
-        client1A.send_message(client1A, client4, Message("Hello from client1A!", MessageTypes.PING))
+        client1A.send_message(client1A, client2A, Message("Hello from client1A!", MessageTypes.PING))
+        client1A.send_message(client1A, client3A, Message("Hello from client1A!", MessageTypes.PING))
+        client1A.send_message(client1A, client4A, Message("Hello from client1A!", MessageTypes.PING))
+
+        # TONY_EVALUATION
+        # Create trust domain A with router and two switches, and two clients for each switch
+        for i in range(0, 24):
+            router = Router(f"router{i}", routerRoot)
+            router.add_neighbor(routerRoot)
+            switch1 = Switch(f"switchA{i}", router)
+            switch1.add_neighbor(router)
+            switch2 = Switch(f"switchB{i}", router)
+            switch2.add_neighbor(router)
+            client1 = Client(f"clientA{i}", switch1)
+            client2 = Client(f"clientB{i}", switch1)
+            client3 = Client(f"clientC{i}", switch2)
+            client4 = Client(f"clientD{i}", switch2)
+
+            client1A.send_message(client1A, client1, Message("Hello from client1A!", MessageTypes.PING))
+            client1A.send_message(client1A, client2, Message("Hello from client1A!", MessageTypes.PING))
+            client1A.send_message(client1A, client3, Message("Hello from client1A!", MessageTypes.PING))
+            client1A.send_message(client1A, client4, Message("Hello from client1A!", MessageTypes.PING))
 
     # TONY_EVALUATION
     print(f"Tree edge count {tree_edge_count(routerRoot)}")
