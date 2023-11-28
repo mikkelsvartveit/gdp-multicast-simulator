@@ -6,6 +6,9 @@ DEBUG = False
 # TONY_EVALUATION
 TOTAL_EDGE_WEIGHT = 0
 
+# TONY_EVALUATION
+TOTAL_RECEIVED_MESSAGES = 0
+
 class MessageTypes(Enum):
     PING = 0
     RIB_ADD_LINK = 1
@@ -156,7 +159,12 @@ class Node:
             )
 
     def handle_message(self, source, message):
-        print(f"[{self}] Received message from {source}: {message}")
+        # print(f"[{self}] Received message from {source}: {message}")
+
+        # TONY_EVALUATION
+        global TOTAL_RECEIVED_MESSAGES
+        TOTAL_RECEIVED_MESSAGES += 1
+        return
 
     def __str__(self):
         return self.name
@@ -552,10 +560,10 @@ def main():
     client2A = Client("client2A", switch1A)
     client3A = Client("client3A", switch2A)
     client4A = Client("client4A", switch2A)
-    client1A.create_multicast_group("group1")
-    client2A.join_multicast_group("group1")
-    client3A.join_multicast_group("group1")
-    client4A.join_multicast_group("group1")
+
+    client1A.send_message(client1A, client2A, Message("Hello from client1A!", MessageTypes.PING))
+    client1A.send_message(client1A, client3A, Message("Hello from client1A!", MessageTypes.PING))
+    client1A.send_message(client1A, client4A, Message("Hello from client1A!", MessageTypes.PING))
 
     # TONY_EVALUATION
     # Create trust domain A with router and two switches, and two clients for each switch
@@ -570,20 +578,20 @@ def main():
         client2 = Client(f"clientB{i}", switch1)
         client3 = Client(f"clientC{i}", switch2)
         client4 = Client(f"clientD{i}", switch2)
-        client1.join_multicast_group("group1")
-        client2.join_multicast_group("group1")
-        client3.join_multicast_group("group1")
-        client4.join_multicast_group("group1")
 
-    client1A.send_multicast_message(
-        client1A, "group1", Message("Hello from client1A!", MessageTypes.PING)
-    )
+        client1A.send_message(client1A, client1, Message("Hello from client1A!", MessageTypes.PING))
+        client1A.send_message(client1A, client2, Message("Hello from client1A!", MessageTypes.PING))
+        client1A.send_message(client1A, client3, Message("Hello from client1A!", MessageTypes.PING))
+        client1A.send_message(client1A, client4, Message("Hello from client1A!", MessageTypes.PING))
 
     # TONY_EVALUATION
     print(f"Tree edge count {tree_edge_count(routerRoot)}")
 
     # TONY_EVALUATION
     print(f"Tree total edge weight {TOTAL_EDGE_WEIGHT}")
+
+    # TONY_EVALUATION
+    print(f"Total received messages {TOTAL_RECEIVED_MESSAGES}")
 
     print("done")
 
