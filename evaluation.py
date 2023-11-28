@@ -118,7 +118,17 @@ class Node:
             )
             self.send_message(self, self.parent_router, message)
 
-    def send_message(self, source, destination, message, prev_hop = None):
+    def send_message(self, source, destination, message):
+        next_hop = self.get_next_hop(destination=destination)[0]
+
+        # TONY_EVALUATION
+        # global TOTAL_EDGE_WEIGHT
+        # TOTAL_EDGE_WEIGHT += 10
+
+        return next_hop.receive_message(source, destination, message)
+    
+    # TONY_EVALUATION
+    def send_unicast_message(self, source, destination, message, prev_hop = None):
         next_hop = self.get_next_hop(destination=destination)[0]
 
         # TONY_EVALUATION
@@ -139,7 +149,16 @@ class Node:
 
         TOTAL_EDGE_WEIGHT += 10
 
-        return next_hop.receive_message(source, destination, message)
+        return next_hop.receive_unicast_message(source, destination, message)
+    
+    # TONY_EVALUATION
+    def receive_unicast_message(self, source, destination, message):
+        if self == destination:
+            # Handle message
+            return self.handle_message(source, message)
+        else:
+            # Forward to next hop
+            return self.send_unicast_message(source, destination, message, self)
 
     def receive_message(self, source, destination, message):
         if self == destination:
@@ -147,7 +166,7 @@ class Node:
             return self.handle_message(source, message)
         else:
             # Forward to next hop
-            return self.send_message(source, destination, message, self)
+            return self.send_message(source, destination, message)
 
     def send_multicast_message(self, source, multicast_group, message, visited=set()):
         next_hops = self.get_next_multicast_hops(multicast_group)
@@ -629,7 +648,7 @@ def main():
         clients.append(client2A)
         clients.append(client3A)
         clients.append(client4A)
-        for i in range(0, 24):
+        for i in range(0, 2499):
             router = Router(f"router{i}", routerRoot)
             router.add_neighbor(routerRoot)
             switch1 = Switch(f"switchA{i}", router)
@@ -646,11 +665,16 @@ def main():
             clients.append(client3)
             clients.append(client4)
 
-        for i in range(0, 100):
-            for client in clients:
-                client1A.send_message(
-                    client1A, client, Message("Hello from client1A!", MessageTypes.PING)
-                )
+        # for i in range(0, 100):
+        #     for client in clients:
+        #         client1A.send_message(
+        #             client1A, client, Message("Hello from client1A!", MessageTypes.PING)
+        #         )
+
+        for client in clients:
+            client1A.send_unicast_message(
+                client1A, client, Message("Hello from client1A!", MessageTypes.PING)
+            )
 
     # TONY_EVALUATION
     print(f"Tree edge count {tree_edge_count(routerRoot)}")
