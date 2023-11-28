@@ -559,7 +559,7 @@ def main():
 
     # TONY_EVALUATION
     # Create trust domain A with router and two switches, and two clients for each switch
-    for i in range(0, 1):
+    for i in range(0, 24):
         router = Router(f"router{i}", routerRoot)
         router.add_neighbor(routerRoot)
         switch1 = Switch(f"switchA{i}", router)
