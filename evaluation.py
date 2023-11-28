@@ -10,7 +10,7 @@ TOTAL_EDGE_WEIGHT = 0
 TOTAL_RECEIVED_MESSAGES = 0
 
 # TONY_EVALUATION
-MULTICAST = True
+MULTICAST = False
 
 class MessageTypes(Enum):
     PING = 0
@@ -23,10 +23,9 @@ class MessageTypes(Enum):
 
 # TONY_EVALUATION
 class NodeTypes(Enum):
-    ROOT_ROUTER = 0
-    ROUTER = 1
-    SWITCH = 2
-    CLIENT = 3
+    ROUTER = 0
+    SWITCH = 1
+    CLIENT = 2
 
 class Message:
     def __init__(self, content, type: MessageTypes):
@@ -119,11 +118,22 @@ class Node:
             )
             self.send_message(self, self.parent_router, message)
 
-    def send_message(self, source, destination, message):
+    def send_message(self, source, destination, message, prev_hop = None):
         next_hop = self.get_next_hop(destination=destination)[0]
 
         # TONY_EVALUATION
         global TOTAL_EDGE_WEIGHT
+        # if prev_hop == None:
+        #     if source.type == NodeTypes.ROUTER and next_hop.type == NodeTypes.ROUTER:
+        #         TOTAL_EDGE_WEIGHT += 20
+        #     else:
+        #         TOTAL_EDGE_WEIGHT += 10
+        # else:
+        #     if prev_hop.type == NodeTypes.ROUTER and next_hop.type == NodeTypes.ROUTER:
+        #         TOTAL_EDGE_WEIGHT += 20
+        #     else:
+        #         TOTAL_EDGE_WEIGHT += 10
+
         TOTAL_EDGE_WEIGHT += 10
 
         return next_hop.receive_message(source, destination, message)
@@ -134,7 +144,7 @@ class Node:
             return self.handle_message(source, message)
         else:
             # Forward to next hop
-            return self.send_message(source, destination, message)
+            return self.send_message(source, destination, message, self)
 
     def send_multicast_message(self, source, multicast_group, message, visited=set()):
         next_hops = self.get_next_multicast_hops(multicast_group)
@@ -149,6 +159,11 @@ class Node:
         ]
 
     def receive_multicast_message(self, source, multicast_group, message, visited):
+
+        # TONY_EVALUATION
+        global TOTAL_EDGE_WEIGHT
+        TOTAL_EDGE_WEIGHT += 10
+
         if (
             hasattr(self, "multicast_groups")
             and multicast_group in self.multicast_groups
@@ -220,10 +235,7 @@ class Router(Node):
         self.rib_multicast_groups = {}
 
         # TONY_EVALUATION
-        if parent_router:
-            self.type: NodeTypes = NodeTypes.ROUTER
-        else:
-            self.type: NodeTypes = NodeTypes.ROOT_ROUTER
+        self.type: NodeTypes = NodeTypes.ROUTER
 
     def get_next_hop(self, destination):
         if destination not in self.routing_table:
@@ -572,7 +584,7 @@ def main():
 
         # TONY_EVALUATION
         # Create trust domain A with router and two switches, and two clients for each switch
-        for i in range(0, 24):
+        for i in range(0, 2499):
             router = Router(f"router{i}", routerRoot)
             router.add_neighbor(routerRoot)
             switch1 = Switch(f"switchA{i}", router)
@@ -612,7 +624,7 @@ def main():
 
         # TONY_EVALUATION
         # Create trust domain A with router and two switches, and two clients for each switch
-        for i in range(0, 24):
+        for i in range(0, 2499):
             router = Router(f"router{i}", routerRoot)
             router.add_neighbor(routerRoot)
             switch1 = Switch(f"switchA{i}", router)
