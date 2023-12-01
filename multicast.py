@@ -1,7 +1,10 @@
 from enum import Enum
+import json
+import sys
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
+COUNT = 0
 
 
 class MessageTypes(Enum):
@@ -105,6 +108,10 @@ class Node:
         return next_hop.receive_message(source, destination, message)
 
     def receive_message(self, source, destination, message):
+        if DEBUG and self.name == "routerRoot":
+            global COUNT
+            COUNT += 1
+
         if self == destination:
             # Handle message
             return self.handle_message(source, message)
@@ -125,6 +132,10 @@ class Node:
         ]
 
     def receive_multicast_message(self, source, multicast_group, message, visited):
+        if DEBUG and self.name == "routerRoot":
+            global COUNT
+            COUNT += 1
+
         if (
             hasattr(self, "multicast_groups")
             and multicast_group in self.multicast_groups
@@ -470,7 +481,7 @@ def main():
 
     # Create trust domain A with router and two switches, and two clients for each switch
     routerA = Router("routerA", parent_router=routerRoot)
-    routerA.add_neighbor(routerRoot)
+    routerA.add_neighbor(routerRoot, 100)
     switch1 = Switch("switch1", parent_router=routerA)
     switch1.add_neighbor(routerA)
     switch2 = Switch("switch2", parent_router=routerA)
@@ -479,39 +490,146 @@ def main():
     client2 = Client("client2", switch1)
     client3 = Client("client3", switch2)
     client4 = Client("client4", switch2)
+    client5 = Client("client5", switch1)
+    client6 = Client("client6", switch1)
+    client7 = Client("client7", switch2)
+    client8 = Client("client8", switch2)
+    client9 = Client("client9", switch1)
+    client10 = Client("client10", switch1)
+    client11 = Client("client11", switch2)
+    client12 = Client("client12", switch2)
+    client13 = Client("client13", switch1)
+    client14 = Client("client14", switch1)
+    client15 = Client("client15", switch2)
+    client16 = Client("client16", switch2)
 
-    # Create trust domain A with router and two switches, and two clients for each switch
+    # Create trust domain B with router and two switches, and two clients for each switch
     # Also add a switch between the two routers for the sake of it
     switchBridge = Switch("switchBridge", parent_router=routerRoot)
-    switchBridge.add_neighbor(routerRoot)
+    switchBridge.add_neighbor(routerRoot, 100)
     routerB = Router("routerB", parent_router=routerRoot)
     routerB.add_neighbor(switchBridge)
     switch3 = Switch("switch3", parent_router=routerB)
     switch3.add_neighbor(routerB)
     switch4 = Switch("switch4", parent_router=routerB)
     switch4.add_neighbor(routerB)
-    client5 = Client("client5", switch3)
-    client6 = Client("client6", switch3)
-    client7 = Client("client7", switch4)
-    client8 = Client("client8", switch4)
+    client16 = Client("client16", switch4)
+    client17 = Client("client17", switch3)
+    client18 = Client("client18", switch3)
+    client19 = Client("client19", switch4)
+    client20 = Client("client20", switch4)
+    client21 = Client("client21", switch3)
+    client22 = Client("client22", switch3)
+    client23 = Client("client23", switch4)
+    client24 = Client("client24", switch4)
+    client25 = Client("client25", switch3)
+    client26 = Client("client26", switch3)
+    client27 = Client("client27", switch4)
+    client28 = Client("client28", switch4)
+    client29 = Client("client29", switch3)
+    client30 = Client("client30", switch3)
+    client31 = Client("client31", switch4)
+    client32 = Client("client32", switch4)
 
     # Send two cross-domain messages
     # client1.send_message(client1, client8, Message("Hello World!", MessageTypes.PING))
     # client8.send_message(client8, client1, Message("Hello World!", MessageTypes.PING))
 
+    switchBetween = Switch("switchBetween", parent_router=routerRoot)
+    # switchBetween.add_neighbor(routerRoot, 100)
+    # switchBetween.add_neighbor(routerA)
+    switchBetween.add_neighbor(routerB)
+
+    DEBUG = True
+
     # Multicast example
     client1.create_multicast_group("group1")
     client2.join_multicast_group("group1")
+    client3.join_multicast_group("group1")
     client4.join_multicast_group("group1")
-    client8.join_multicast_group("group1")
-    client1.send_multicast_message(
-        client1, "group1", Message("Hello from client1!", MessageTypes.PING)
-    )
-    client8.send_multicast_message(
-        client8, "group1", Message("Hello from client8!", MessageTypes.PING)
-    )
 
+    client1.create_multicast_group("group1")
+    client2.join_multicast_group("group1")
+    client3.join_multicast_group("group1")
+    client4.join_multicast_group("group1")
+    client5.join_multicast_group("group1")
+    client6.join_multicast_group("group1")
+    client7.join_multicast_group("group1")
+    client8.join_multicast_group("group1")
+    client9.join_multicast_group("group1")
+    client10.join_multicast_group("group1")
+    client11.join_multicast_group("group1")
+    client12.join_multicast_group("group1")
+    client13.join_multicast_group("group1")
+    client14.join_multicast_group("group1")
+    client15.join_multicast_group("group1")
+    client16.join_multicast_group("group1")
+    client17.join_multicast_group("group1")
+    client18.join_multicast_group("group1")
+    client19.join_multicast_group("group1")
+    client20.join_multicast_group("group1")
+    client21.join_multicast_group("group1")
+    client22.join_multicast_group("group1")
+    client23.join_multicast_group("group1")
+    client24.join_multicast_group("group1")
+    client25.join_multicast_group("group1")
+    client26.join_multicast_group("group1")
+    client27.join_multicast_group("group1")
+    client28.join_multicast_group("group1")
+    client29.join_multicast_group("group1")
+    client30.join_multicast_group("group1")
+    client31.join_multicast_group("group1")
+    client32.join_multicast_group("group1")
+
+    for _ in range(100):
+        client1.send_multicast_message(
+            client1, "group1", Message("Hello from client1!", MessageTypes.PING)
+        )
+
+    print(COUNT)
     print("done")
+
+    # root_rib_size = get_rib_size(routerRoot)
+    # a_rib_size = get_rib_size(routerA)
+    # print(root_rib_size)
+    # print(a_rib_size)
+
+    # client5.join_multicast_group("group1")
+    # client6.join_multicast_group("group1")
+    # client7.join_multicast_group("group1")
+    # client8.join_multicast_group("group1")
+
+    # UNICAST
+    # for _ in range(100):
+    #     client1.send_message(client1, client2, Message("Hello", MessageTypes.PING))
+    #     client1.send_message(client1, client4, Message("Hello", MessageTypes.PING))
+    #     client1.send_message(client1, client8, Message("Hello", MessageTypes.PING))
+
+    # print(COUNT)
+
+
+class Encoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Router):
+            return obj.name
+        if isinstance(obj, Switch):
+            return obj.name
+        if isinstance(obj, Client):
+            return obj.name
+        if isinstance(obj, set):
+            return list(obj)
+        return super().default(obj)
+
+
+def get_rib_size(router):
+    rib = {
+        # "nodes": router.rib_nodes,
+        # "edges": router.rib_edges,
+        # "ownerships": router.rib_child_router_ownerships,
+        "multicast_groups": router.rib_multicast_groups,
+    }
+    rib_json = json.dumps(rib, cls=Encoder)
+    return len(rib_json)
 
 
 main()
