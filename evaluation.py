@@ -10,7 +10,7 @@ TOTAL_EDGE_WEIGHT = 0
 TOTAL_RECEIVED_MESSAGES = 0
 
 # TONY_EVALUATION
-MULTICAST = False
+MULTICAST = True
 
 # TONY_EVALUATION
 FILTERING = True
@@ -607,49 +607,80 @@ def main():
     # Multicast
     # TONY_EVALUATION
     if MULTICAST:
-        routerA = Router("routerA", parent_router=routerRoot)
-        routerA.add_neighbor(routerRoot)
-        switch1A = Switch("switch1A", parent_router=routerA)
-        switch1A.add_neighbor(routerA)
-        switch2A = Switch("switch2A", parent_router=routerA)
-        switch2A.add_neighbor(routerA)
-        client1A = Client("client1A", switch1A)
-        client2A = Client("client2A", switch1A)
-        client3A = Client("client3A", switch2A)
-        client4A = Client("client4A", switch2A)
-        client1A.create_multicast_group("group1")
-        client2A.join_multicast_group("group1")
-        client3A.join_multicast_group("group1")
-        client4A.join_multicast_group("group1")
+        trust_domains = []
+        trust_domains.append([[routerRoot]])
+        
+        #initialize first layer
+        
+        first_layer_routers = []
+        for i in range(10):
+            curr_router = Router(f"FirstLayerRouter{i + 1}", parent_router=routerRoot)
+            curr_router.add_neighbor(routerRoot)
+            first_layer_routers.append(curr_router)
+        
+        second_layer_routers = []
+        for flr in first_layer_routers:
+            for i in range(10):
+                curr_router = Router(f"SecondLayerRouter{i + 1}", parent_router=flr)
+                curr_router.add_neighbor(flr)
+                second_layer_routers.append(curr_router)
+            
+        second_layer_routers[0].add_neighbor(second_layer_routers[-1])
+        
+        clients = []
+        interested = 0
+        int_list = []
+        sender_found = False
+        sender_client = None
+        
+        def make_basic_router(parent_router, idx, join_mg=False):
+            nonlocal sender_found
+            nonlocal sender_client
+            nonlocal interested
+            
+            switch1A = Switch(f"FLswitch1A_{idx}", parent_router=parent_router)
+            switch1A.add_neighbor(parent_router)
+            switch2A = Switch(f"FLswitch2A_{idx}", parent_router=parent_router)
+            switch2A.add_neighbor(parent_router)
+            
+            client1A = Client(f"FLclient1A_{idx}", switch1A)
+            client2A = Client(f"FLclient2A_{idx}", switch1A)
+            client3A = Client(f"FLclient3A_{idx}", switch2A)
+            client4A = Client(f"FLclient4A_{idx}", switch2A)
+            
+            if join_mg:
+                print("JOIN", idx)
+                if not sender_found:
+                    print("Made sender")
+                    sender_found = True
+                    client1A.create_multicast_group("group1")
+                    sender_client = client1A
+                else:
+                    client1A.join_multicast_group("group1")
+                client2A.join_multicast_group("group1")
+                client3A.join_multicast_group("group1")
+                client4A.join_multicast_group("group1")
+                int_list.extend([client1A, client2A, client3A, client4A])
+                interested += 4
+            
+            clients.append(client1A)
+            clients.append(client2A)
+            clients.append(client3A)
+            clients.append(client4A)
+               
+        for i, leaf_router in enumerate(second_layer_routers[1:-1]):
+            make_basic_router(leaf_router, i + 1)
+        make_basic_router(second_layer_routers[0], 0, True)
+        make_basic_router(second_layer_routers[-1], len(second_layer_routers) - 1, True)
+                
+        print("BUILDING DONE")
+        print(len(clients), int_list)
 
-        # TONY_EVALUATION
-        # Create trust domain A with router and two switches, and two clients for each switch
-        for i in range(0, 249):
-            router = Router(f"router{i}", routerRoot)
-            router.add_neighbor(routerRoot)
-            switch1 = Switch(f"switchA{i}", router)
-            switch1.add_neighbor(router)
-            switch2 = Switch(f"switchB{i}", router)
-            switch2.add_neighbor(router)
-            client1 = Client(f"clientA{i}", switch1)
-            client2 = Client(f"clientB{i}", switch1)
-            client3 = Client(f"clientC{i}", switch2)
-            client4 = Client(f"clientD{i}", switch2)
-            client1.join_multicast_group("group1")
-            client2.join_multicast_group("group1")
-            client3.join_multicast_group("group1")
-            client4.join_multicast_group("group1")
-
-        # When sending multiple messages
-        for i in range(0, 10000):
-            client1A.send_multicast_message(
-                client1A, "group1", Message("Hello from client1A!", MessageTypes.PING)
+        print("SENDING")
+        for i in range(0, 1):
+            sender_client.send_multicast_message(
+                sender_client, "group1", Message("Hello from client1A!", MessageTypes.PING)
             )
-
-        # When sending one message
-        # client1A.send_multicast_message(
-        #     client1A, "group1", Message("Hello from client1A!", MessageTypes.PING)
-        # )
 
     # Unicast
     # TONY_EVALUATION
