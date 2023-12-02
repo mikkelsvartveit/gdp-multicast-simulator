@@ -12,6 +12,7 @@ class MessageTypes(Enum):
     MULTICAST_CREATE_GROUP = 4
     MULTICAST_JOIN_GROUP = 5
     RIB_QUERY_NEXT_MULTICAST_HOPS = 6
+    ROUTER_JOIN_MULTICAST_GROUP = 7
 
 
 class Message:
@@ -240,6 +241,23 @@ class Router(Node):
             group_name = message.content
             self.rib_join_multicast_group(source, group_name)
 
+        elif message.type == MessageTypes.ROUTER_JOIN_MULTICAST_GROUP:
+            group_name = message.content
+            self.rib_router_join_multicast_group(group_name)
+
+    def rib_router_join_multicast_group(self, group_name):
+        if not group_name in self.rib_multicast_groups:
+            return
+
+        multicast_group = self.rib_multicast_groups[group_name]
+
+        # Add this router as a member of the multicast group
+        nodes, edges = self.rib_query_join_multicast_group_path(
+            self, multicast_group["nodes"]
+        )
+        multicast_group["nodes"].update(nodes)
+        multicast_group["edges"].update(edges)
+
     # Dijkstra's algorithm for finding next hop (thanks, ChatGPT)
     def rib_query_next_hop(self, start, destination):
         # Initialize distance and previous node dictionaries
@@ -288,10 +306,6 @@ class Router(Node):
         if not multicast_group_name in self.rib_multicast_groups:
             print(f"[{self}] Could not find multicast group '{multicast_group_name}'!")
             return
-
-        # if not start in self.rib_multicast_groups[multicast_group_name]["nodes"]:
-        #     print(f"[{self}] {start} not in multicast group '{multicast_group_name}'!")
-        #     return
 
         multicast_group = self.rib_multicast_groups[multicast_group_name]
 
@@ -419,6 +433,22 @@ class Router(Node):
         self.rib_multicast_groups[group_name]["nodes"].add(node)
         self.rib_multicast_groups[group_name]["members"].add(node)
 
+        # If this router has more than one child router that is part of the multicast group,
+        # make sure that the child routers actually receives the multicast messages to be able
+        # to forward them to up.
+        child_routers = set(
+            filter(
+                lambda member: isinstance(member, Router),
+                self.rib_multicast_groups[group_name]["members"],
+            )
+        )
+        if len(child_routers) > 1:
+            for router in child_routers:
+                message = Message(
+                    content=group_name, type=MessageTypes.ROUTER_JOIN_MULTICAST_GROUP
+                )
+                self.send_message(self, router, message)
+
 
 # Helper function
 def backtrack_first_hop(start, destination, previous_nodes):
@@ -467,10 +497,15 @@ def main():
     global DEBUG
 
     routerRoot = Router("routerRoot", None)
+    routerMiddleA = Router("routerMiddleA", routerRoot)
+    routerMiddleA.add_neighbor(routerRoot)
+    routerMiddleB = Router("routerMiddleB", routerRoot)
+    routerMiddleB.add_neighbor(routerRoot)
+    routerMiddleB.add_neighbor(routerMiddleA)
 
     # Create trust domain A with router and two switches, and two clients for each switch
-    routerA = Router("routerA", parent_router=routerRoot)
-    routerA.add_neighbor(routerRoot)
+    routerA = Router("routerA", parent_router=routerMiddleA)
+    routerA.add_neighbor(routerMiddleA)
     switch1 = Switch("switch1", parent_router=routerA)
     switch1.add_neighbor(routerA)
     switch2 = Switch("switch2", parent_router=routerA)
@@ -482,9 +517,9 @@ def main():
 
     # Create trust domain A with router and two switches, and two clients for each switch
     # Also add a switch between the two routers for the sake of it
-    switchBridge = Switch("switchBridge", parent_router=routerRoot)
-    switchBridge.add_neighbor(routerRoot)
-    routerB = Router("routerB", parent_router=routerRoot)
+    switchBridge = Switch("switchBridge", parent_router=routerMiddleB)
+    switchBridge.add_neighbor(routerMiddleB)
+    routerB = Router("routerB", parent_router=routerMiddleB)
     routerB.add_neighbor(switchBridge)
     switch3 = Switch("switch3", parent_router=routerB)
     switch3.add_neighbor(routerB)
@@ -494,22 +529,24 @@ def main():
     client6 = Client("client6", switch3)
     client7 = Client("client7", switch4)
     client8 = Client("client8", switch4)
-
-    # Send two cross-domain messages
-    # client1.send_message(client1, client8, Message("Hello World!", MessageTypes.PING))
-    # client8.send_message(client8, client1, Message("Hello World!", MessageTypes.PING))
+    switchLol = Switch("switchLol", parent_router=routerMiddleB)
+    switchLol.add_neighbor(routerMiddleB)
+    clientLol = Client("clientLol", switchLol)
 
     # Multicast example
     client1.create_multicast_group("group1")
     client2.join_multicast_group("group1")
     client4.join_multicast_group("group1")
+    client5.join_multicast_group("group1")
+    client6.join_multicast_group("group1")
     client8.join_multicast_group("group1")
+    clientLol.join_multicast_group("group1")
     client1.send_multicast_message(
         client1, "group1", Message("Hello from client1!", MessageTypes.PING)
     )
-    client8.send_multicast_message(
-        client8, "group1", Message("Hello from client8!", MessageTypes.PING)
-    )
+    # client8.send_multicast_message(
+    #     client8, "group1", Message("Hello from client8!", MessageTypes.PING)
+    # )
 
     print("done")
 
