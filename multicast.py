@@ -2,6 +2,7 @@ from enum import Enum
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
+TOTAL_COST = 0
 
 
 class MessageTypes(Enum):
@@ -102,7 +103,12 @@ class Node:
             self.send_message(self, self.parent_router, message)
 
     def send_message(self, source, destination, message):
-        next_hop = self.get_next_hop(destination=destination)[0]
+        (next_hop, link_cost) = self.get_next_hop(destination=destination)
+
+        if DEBUG:
+            global TOTAL_COST
+            TOTAL_COST += link_cost
+
         return next_hop.receive_message(source, destination, message)
 
     def receive_message(self, source, destination, message):
@@ -117,6 +123,16 @@ class Node:
         next_hops = self.get_next_multicast_hops(multicast_group)
         updated_visited = visited.copy()
         updated_visited.add(self)
+
+        if DEBUG:
+            # Calculate total cost for this message
+            global TOTAL_COST
+            receivers = [next_hop for next_hop in next_hops if next_hop not in visited]
+            for receiver in receivers:
+                # Get link cost to receiver
+                (_, link_cost) = self.routing_table[receiver]
+                TOTAL_COST += link_cost
+
         return [
             next_hop.receive_multicast_message(
                 source, multicast_group, message, updated_visited
@@ -497,58 +513,64 @@ def main():
     global DEBUG
 
     routerRoot = Router("routerRoot", None)
-    routerMiddleA = Router("routerMiddleA", routerRoot)
-    routerMiddleA.add_neighbor(routerRoot)
-    routerMiddleB = Router("routerMiddleB", routerRoot)
-    routerMiddleB.add_neighbor(routerRoot)
-    routerMiddleB.add_neighbor(routerMiddleA)
+    switchOuter1 = Switch("switchOuter1", parent_router=routerRoot)
+    switchOuter1.add_neighbor(routerRoot, 100)
+    switchOuter2 = Switch("switchOuter2", parent_router=routerRoot)
+    switchOuter2.add_neighbor(routerRoot, 100)
 
     # Create trust domain A with router and two switches, and two clients for each switch
-    routerA = Router("routerA", parent_router=routerMiddleA)
-    routerA.add_neighbor(routerMiddleA)
-    switch1 = Switch("switch1", parent_router=routerA)
-    switch1.add_neighbor(routerA)
+    routerA = Router("routerA", parent_router=routerRoot)
+    routerA.add_neighbor(switchOuter1, 100)
+    switch1 = Switch("switchA1", parent_router=routerA)
     switch2 = Switch("switch2", parent_router=routerA)
+    switch3 = Switch("switch3", parent_router=routerA)
+    switch1.add_neighbor(routerA)
     switch2.add_neighbor(routerA)
+    switch1.add_neighbor(switch2)
+    switch3.add_neighbor(switch1)
+    switch3.add_neighbor(switch2)
     client1 = Client("client1", switch1)
-    client2 = Client("client2", switch1)
-    client3 = Client("client3", switch2)
+    client2 = Client("client2", switch3)
+    client3 = Client("client3", switch3)
     client4 = Client("client4", switch2)
 
-    # Create trust domain A with router and two switches, and two clients for each switch
-    # Also add a switch between the two routers for the sake of it
-    switchBridge = Switch("switchBridge", parent_router=routerMiddleB)
-    switchBridge.add_neighbor(routerMiddleB)
-    routerB = Router("routerB", parent_router=routerMiddleB)
-    routerB.add_neighbor(switchBridge)
-    switch3 = Switch("switch3", parent_router=routerB)
-    switch3.add_neighbor(routerB)
-    switch4 = Switch("switch4", parent_router=routerB)
+    # Create trust domain B with router and two switches, and two clients for each switch
+    routerB = Router("routerB", parent_router=routerRoot)
+    routerB.add_neighbor(switchOuter2, 100)
+    switch4 = Switch("switchA1", parent_router=routerB)
+    switch5 = Switch("switch2", parent_router=routerB)
+    switch6 = Switch("switch3", parent_router=routerB)
     switch4.add_neighbor(routerB)
-    client5 = Client("client5", switch3)
-    client6 = Client("client6", switch3)
-    client7 = Client("client7", switch4)
-    client8 = Client("client8", switch4)
-    switchLol = Switch("switchLol", parent_router=routerMiddleB)
-    switchLol.add_neighbor(routerMiddleB)
-    clientLol = Client("clientLol", switchLol)
+    switch5.add_neighbor(routerB)
+    switch4.add_neighbor(switch5)
+    switch6.add_neighbor(switch4)
+    switch6.add_neighbor(switch5)
+    client5 = Client("client5", switch4)
+    client6 = Client("client6", switch6)
+    client7 = Client("client7", switch6)
+    client8 = Client("client8", switch5)
+
+    # Add a switch and links between the two trust domains
+    switchBridge = Switch("switchBridge", parent_router=routerRoot)
+    switchBridge.add_neighbor(switchOuter1, 100)
+    switchBridge.add_neighbor(switchOuter2, 100)
+    switchBridge.add_neighbor(routerA, 100)
+    switchBridge.add_neighbor(routerB, 100)
 
     # Multicast example
+    DEBUG = True
     client1.create_multicast_group("group1")
-    client2.join_multicast_group("group1")
+    client3.join_multicast_group("group1")
     client4.join_multicast_group("group1")
-    client5.join_multicast_group("group1")
     client6.join_multicast_group("group1")
     client8.join_multicast_group("group1")
-    clientLol.join_multicast_group("group1")
-    client1.send_multicast_message(
-        client1, "group1", Message("Hello from client1!", MessageTypes.PING)
-    )
-    # client8.send_multicast_message(
-    #     client8, "group1", Message("Hello from client8!", MessageTypes.PING)
-    # )
 
-    print("done")
+    for _ in range(10):
+        client1.send_multicast_message(
+            client1, "group1", Message("Hello from client1!", MessageTypes.PING)
+        )
+
+    print(TOTAL_COST)
 
 
 main()
