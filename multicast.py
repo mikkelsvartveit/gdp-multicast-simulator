@@ -1,4 +1,5 @@
 from enum import Enum
+import json
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
@@ -560,17 +561,48 @@ def main():
     # Multicast example
     DEBUG = True
     client1.create_multicast_group("group1")
+    client2.join_multicast_group("group1")
     client3.join_multicast_group("group1")
     client4.join_multicast_group("group1")
+    client5.join_multicast_group("group1")
     client6.join_multicast_group("group1")
+    client7.join_multicast_group("group1")
     client8.join_multicast_group("group1")
 
-    for _ in range(10):
-        client1.send_multicast_message(
-            client1, "group1", Message("Hello from client1!", MessageTypes.PING)
-        )
+    print(get_rib_size(routerRoot))
+    print(get_rib_size(routerA))
+    print(get_rib_size(routerB))
 
-    print(TOTAL_COST)
+    # for _ in range(10):
+    #     client1.send_multicast_message(
+    #         client1, "group1", Message("Hello from client1!", MessageTypes.PING)
+    #     )
+
+    # print(TOTAL_COST)
+
+
+class Encoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, Router):
+            return obj.name
+        if isinstance(obj, Switch):
+            return obj.name
+        if isinstance(obj, Client):
+            return obj.name
+        if isinstance(obj, set):
+            return list(obj)
+        return super().default(obj)
+
+
+def get_rib_size(router):
+    rib = {
+        # "nodes": router.rib_nodes,
+        # "edges": router.rib_edges,
+        # "ownerships": router.rib_child_router_ownerships,
+        "multicast_groups": router.rib_multicast_groups,
+    }
+    rib_json = json.dumps(rib, cls=Encoder)
+    return len(rib_json)
 
 
 main()
