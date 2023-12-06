@@ -12,6 +12,7 @@ class MessageTypes(Enum):
     MULTICAST_CREATE_GROUP = 4
     MULTICAST_JOIN_GROUP = 5
     RIB_QUERY_NEXT_MULTICAST_HOPS = 6
+    MULTICAST_NOTIFY_NEW_MEMBER = 7
 
 
 class Message:
@@ -33,6 +34,9 @@ class Node:
         self.neighbors = set()
         self.routing_table = {self: (None, 0)}
         self.multicast_routing_table = {}
+
+    def get_trust_domain_router(self):
+        return self if isinstance(self, Router) else self.parent_router
 
     def get_next_hop(self, destination):
         if destination not in self.routing_table:
@@ -95,10 +99,13 @@ class Node:
             neighbor.add_neighbor(self, link_cost, reverse=True)
 
             # Notify RIB of the new link
-            message = Message(
-                content=(self, neighbor, link_cost), type=MessageTypes.RIB_ADD_LINK
-            )
-            self.send_message(self, self.parent_router, message)
+            if isinstance(self, Router):
+                self.rib_add_link(self, neighbor, link_cost)
+            else:
+                message = Message(
+                    content=(self, neighbor, link_cost), type=MessageTypes.RIB_ADD_LINK
+                )
+                self.send_message(self, self.parent_router, message)
 
     def send_message(self, source, destination, message):
         next_hop = self.get_next_hop(destination=destination)[0]
@@ -158,12 +165,17 @@ class Switch(Node):
 
 
 class Client(Node):
-    def __init__(self, name, switch):
-        super().__init__(name, switch.parent_router)
+    def __init__(self, name, node_connected_to):
+        parent_router = (
+            node_connected_to
+            if isinstance(node_connected_to, Router)
+            else node_connected_to.parent_router
+        )
+        super().__init__(name, parent_router)
         self.multicast_groups = set()
 
-        # Register the switch as a neighbor
-        self.add_neighbor(switch)
+        # Register the connected node as a neighbor
+        self.add_neighbor(node_connected_to)
 
     def handle_message(self, source, message):
         super().handle_message(source, message)
@@ -245,44 +257,62 @@ class Router(Node):
             group_name = message.content
             self.rib_join_multicast_group(source, group_name)
 
+        elif message.type == MessageTypes.MULTICAST_NOTIFY_NEW_MEMBER:
+            group_name = message.content
+            self.rib_notify_new_multicast_member(source, group_name)
+
     def rib_query_next_hop(self, start, destination):
-        # If the destination is in the same trust domain, use Dijkstra's algorithm within the domain
-        if destination.parent_router == self:
-            next_hop, distance = self.dijkstra_path_to_single_node(start, destination)
-            return next_hop, distance
+        # Try to route with local RIB
+        result = self.dijkstra_path_to_single_node(start, destination)
+        if result:
+            return result
 
-        # If the destination is not in the same trust domain, first route to the sender's trust domain router
-        # Then, route to the destination's trust domain router
-        else:
-            # If the destination is a client, route to the client's trust domain's router
-            destination = (
-                destination
-                if isinstance(destination, Router)
-                else destination.parent_router
+        # Forward to parent RIB
+        if self.parent_router:
+            message = Message(
+                content=(start, destination), type=MessageTypes.RIB_QUERY_NEXT_HOP
             )
-
-            # Try to route with local RIB
-            result = self.dijkstra_path_to_single_node(start, destination)
-            if result:
-                return result
-
-            if not isinstance(start, Router) and start.parent_router == self:
-                # Route to the sender's trust domain router
-                next_hop, distance = self.dijkstra_path_to_single_node(
-                    start, start.parent_router
-                )
-                return next_hop, distance
-
-            # Else ask the parent RIB for the next hop to the destination's trust domain router
-            if self.parent_router:
-                message = Message(
-                    content=(start, destination),
-                    type=MessageTypes["RIB_QUERY_NEXT_HOP"],
-                )
-
-                return self.send_message(self, self.parent_router, message)
+            return self.send_message(self, self.parent_router, message)
 
         return None  # Path not found
+
+        # # If the destination is in the same trust domain, use Dijkstra's algorithm within the domain
+        # if destination.parent_router == self:
+        #     next_hop, distance = self.dijkstra_path_to_single_node(start, destination)
+        #     return next_hop, distance
+
+        # # If the destination is not in the same trust domain, first route to the sender's trust domain router
+        # # Then, route to the destination's trust domain router
+        # else:
+        #     # If the destination is a client, route to the client's trust domain's router
+        #     destination = (
+        #         destination
+        #         if isinstance(destination, Router)
+        #         else destination.parent_router
+        #     )
+
+        #     # Try to route with local RIB
+        #     result = self.dijkstra_path_to_single_node(start, destination)
+        #     if result:
+        #         return result
+
+        #     if not isinstance(start, Router) and start.parent_router == self:
+        #         # Route to the sender's trust domain router
+        #         next_hop, distance = self.dijkstra_path_to_single_node(
+        #             start, start.parent_router
+        #         )
+        #         return next_hop, distance
+
+        #     # Else ask the parent RIB for the next hop to the destination's trust domain router
+        #     if self.parent_router:
+        #         message = Message(
+        #             content=(start, destination),
+        #             type=MessageTypes["RIB_QUERY_NEXT_HOP"],
+        #         )
+
+        #         return self.send_message(self, self.parent_router, message)
+
+        # return None  # Path not found
 
     # Dijkstra's algorithm for finding next hop (thanks, ChatGPT)
     def dijkstra_path_to_single_node(self, start, destination):
@@ -331,18 +361,20 @@ class Router(Node):
         ]
 
         # Also check the parent RIB for potenital links outside the domain
-        if start == self and self.parent_router:
+        if self.parent_router:
             message = Message(
                 content=multicast_group_name,
                 type=MessageTypes.RIB_QUERY_NEXT_MULTICAST_HOPS,
             )
-            external_next_hops = self.send_message(self, self.parent_router, message)
+            external_next_hops = self.send_message(
+                start.get_trust_domain_router(), self.parent_router, message
+            )
             next_hops.extend(external_next_hops)
 
         return next_hops
 
     # Returns the full shortest path (a list of edges) from 'start' to any of the nodes in 'destinations'
-    def rib_query_join_multicast_group_path(self, start, destinations):
+    def dijkstra_path_to_any_node(self, start, destinations):
         # Initialize distance and previous node dictionaries
         distances = {node: float("infinity") for node in self.rib_nodes}
         previous_nodes = {node: None for node in self.rib_nodes}
@@ -383,24 +415,11 @@ class Router(Node):
         self.rib_edges.add((node1, node2, link_cost))
 
         if self.parent_router:
-            if node1.parent_router == node2.parent_router:
-                # If the two nodes are in the same trust domain, propagate ownership up the tree
-                message = Message(
-                    content=(node1.parent_router, node1),
-                    type=MessageTypes.RIB_ADD_OWNERSHIP,
-                )
-                self.send_message(self, self.parent_router, message)
-                message = Message(
-                    content=(node2.parent_router, node2),
-                    type=MessageTypes.RIB_ADD_OWNERSHIP,
-                )
-                self.send_message(self, self.parent_router, message)
-            else:
-                # If the two nodes are in different trust domains, propagate link up the tree
-                message = Message(
-                    content=(node1, node2, link_cost), type=MessageTypes.RIB_ADD_LINK
-                )
-                self.send_message(self, self.parent_router, message)
+            # Propagate link up the tree
+            message = Message(
+                content=(node1, node2, link_cost), type=MessageTypes.RIB_ADD_LINK
+            )
+            self.send_message(self, self.parent_router, message)
 
     def rib_add_ownership(self, router, node):
         if self != router:
@@ -427,19 +446,16 @@ class Router(Node):
             message = Message(
                 content=group_name, type=MessageTypes.MULTICAST_CREATE_GROUP
             )
-            self.send_message(self, self.parent_router, message)
+            self.send_message(
+                creator.get_trust_domain_router(), self.parent_router, message
+            )
 
     def rib_join_multicast_group(self, node, group_name):
-        # If this RIB doesn't know about the multicast group, forward to parent router
+        # If this RIB doesn't know about the multicast group, save the group and forward to parent router
         if not group_name in self.rib_multicast_groups:
             if not self.parent_router:
                 print(f"Could not find multicast group '{group_name}'!")
                 return
-
-            message = Message(
-                content=group_name, type=MessageTypes.MULTICAST_JOIN_GROUP
-            )
-            self.send_message(self, self.parent_router, message)
 
             self.rib_multicast_groups[group_name] = {
                 "members": set(),
@@ -450,9 +466,16 @@ class Router(Node):
             # Router adds itself to the multicast tree
             self.rib_multicast_groups[group_name]["nodes"].add(self)
 
+            message = Message(
+                content=group_name, type=MessageTypes.MULTICAST_JOIN_GROUP
+            )
+            self.send_message(
+                node.get_trust_domain_router(), self.parent_router, message
+            )
+
         if self.rib_multicast_groups[group_name]["nodes"]:
             # Find edges that connects the node to the multicast tree
-            nodes, edges = self.rib_query_join_multicast_group_path(
+            nodes, edges = self.dijkstra_path_to_any_node(
                 node, self.rib_multicast_groups[group_name]["nodes"]
             )
 
@@ -462,6 +485,22 @@ class Router(Node):
 
         self.rib_multicast_groups[group_name]["nodes"].add(node)
         self.rib_multicast_groups[group_name]["members"].add(node)
+
+        # Let other routers in the group know about the new member
+        for member in self.rib_multicast_groups[group_name]["members"]:
+            if isinstance(member, Router) and member != node.get_trust_domain_router():
+                message = Message(
+                    content=group_name, type=MessageTypes.MULTICAST_NOTIFY_NEW_MEMBER
+                )
+                self.send_message(node.get_trust_domain_router(), member, message)
+
+    def rib_notify_new_multicast_member(self, node, group_name):
+        next_hop, distance = self.rib_query_next_hop(self, node)
+
+        if group_name not in self.multicast_routing_table:
+            self.multicast_routing_table[group_name] = set()
+
+        self.multicast_routing_table[group_name].add(next_hop)
 
 
 # Helper function
@@ -510,52 +549,52 @@ def main():
     # Enable to print every message received at any node. Disable to only print messages received at clients.
     global DEBUG
 
-    # Trust domain level 1
+    # Trust domain 1
     router1 = Router("router1", None)
     switch1A = Switch("switch1A", router1)
     switch1A.add_neighbor(router1)
     switch1B = Switch("switch1B", router1)
     switch1B.add_neighbor(router1)
 
-    # Trust domain level 2
+    # Trust domain 2A
     router2A = Router("router2A", router1)
     router2A.add_neighbor(switch1A)
-    router2B = Router("router2B", router1)
-    router2B.add_neighbor(switch1B)
     switch2A = Switch("switch2A", router2A)
     switch2A.add_neighbor(router2A)
-    switch2B = Switch("switch2B", router2A)
-    switch2B.add_neighbor(router2A)
-    switch2C = Switch("switch2C", router2B)
-    switch2C.add_neighbor(router2B)
-    switch2D = Switch("switch2D", router2B)
-    switch2D.add_neighbor(router2B)
+    client2A = Client("client2A", switch2A)
 
-    # Trust domain level 3
+    # Trust domain 2B
+    router2B = Router("router2B", router1)
+    router2B.add_neighbor(switch1B)
+    switch2B = Switch("switch2B", router2B)
+    switch2B.add_neighbor(router2B)
+
+    # Trust domain 3A
     router3A = Router("router3A", router2A)
     router3A.add_neighbor(switch2A)
-    router3B = Router("router3B", router2A)
-    router3B.add_neighbor(switch2B)
-    router3C = Router("router3C", router2B)
-    router3C.add_neighbor(switch2C)
-    router3D = Router("router3D", router2B)
-    router3D.add_neighbor(switch2D)
-    switch3A = Switch("switch3A", router1)
+    switch3A = Switch("switch3A", router3A)
     switch3A.add_neighbor(router3A)
-    switch3A.add_neighbor(router3D)
+    client3A = Client("client3A", switch3A)
 
-    # Add some clients
-    switch3B = Switch("switch3B", router3A)
-    switch3B.add_neighbor(router3A)
-    client3A = Client("client3A", switch3B)
-    switch3C = Switch("switch3C", router3D)
-    switch3C.add_neighbor(router3D)
-    client3B = Client("client3B", switch3C)
+    # Trust domain 3B
+    router3B = Router("router3B", router2B)
+    router3B.add_neighbor(switch2B)
+    switch3B = Switch("switch3B", router3B)
+    switch3B.add_neighbor(router3B)
+    client3B = Client("client3B", switch3B)
 
-    # DEBUG = True
+    router3A.add_neighbor(router3B, 1)
+
     # Send messages
-    client3A.send_message(
-        client3A, client3B, Message("Hello, world!", MessageTypes.PING)
+    # client3A.send_message(
+    #     client3A, client3B, Message("Hello, world!", MessageTypes.PING)
+    # )
+
+    client3A.create_multicast_group("group1")
+    client2A.join_multicast_group("group1")
+    client3B.join_multicast_group("group1")
+    client3A.send_multicast_message(
+        client3A, "group1", Message("Hello, multicast world!", MessageTypes.PING)
     )
 
     print("done")
