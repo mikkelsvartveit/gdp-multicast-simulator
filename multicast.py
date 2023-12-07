@@ -118,11 +118,6 @@ class Node:
             # Handle message
             return self.handle_message(source, message)
         else:
-            # if message.type == MessageTypes.PING:
-            #     print(
-            #         f"[{self}] Forwarding message to {self.get_next_hop(destination)}"
-            #     )
-
             # Forward to next hop
             return self.send_message(source, destination, message)
 
