@@ -9,11 +9,12 @@ class MessageTypes(Enum):
     RIB_ADD_LINK = 1
     RIB_ADD_OWNERSHIP = 2
     RIB_QUERY_NEXT_HOP = 3
-    CREATE_MULTICAST_GROUP = 4
-    CLIENT_JOIN_MULTICAST_GROUP = 5
-    ROUTER_JOIN_MULTICAST_GROUP = 6
-    RIB_QUERY_NEXT_MULTICAST_HOPS = 7
-    MULTICAST_GROUP_TRANSFER_LCA = 8
+    ADD_MULTICAST_GROUP = 4
+    CLIENT_CREATE_MULTICAST_GROUP = 5
+    CLIENT_JOIN_MULTICAST_GROUP = 6
+    ROUTER_JOIN_MULTICAST_GROUP = 7
+    RIB_QUERY_NEXT_MULTICAST_HOPS = 8
+    MULTICAST_GROUP_TRANSFER_LCA = 9
 
 
 class Message:
@@ -187,7 +188,7 @@ class Client(Node):
     def create_multicast_group(self, group_name):
         message = Message(
             content=(group_name, self.get_trust_domain_router()),
-            type=MessageTypes.CREATE_MULTICAST_GROUP,
+            type=MessageTypes.CLIENT_CREATE_MULTICAST_GROUP,
         )
         self.send_message(self, self.parent_router, message)
         self.multicast_groups.add(group_name)
@@ -258,9 +259,17 @@ class Router(Node):
             (router, node) = message.content
             self.rib_add_ownership(router, node)
 
-        elif message.type == MessageTypes.CREATE_MULTICAST_GROUP:
+        elif message.type == MessageTypes.ADD_MULTICAST_GROUP:
             group_name, lowest_common_ancestor = message.content
-            self.rib_create_multicast_group(source, group_name, lowest_common_ancestor)
+            self.rib_add_multicast_group(source, group_name, lowest_common_ancestor)
+
+        elif message.type == MessageTypes.CLIENT_CREATE_MULTICAST_GROUP:
+            group_name, lowest_common_ancestor = message.content
+            self.rib_add_multicast_group(source, group_name, lowest_common_ancestor)
+            self.rib_router_join_multicast_group(
+                source.get_trust_domain_router(), group_name
+            )
+            self.rib_client_join_multicast_group(source, group_name)
 
         elif message.type == MessageTypes.CLIENT_JOIN_MULTICAST_GROUP:
             group_name = message.content
@@ -342,18 +351,23 @@ class Router(Node):
                         queue.append((new_distance, neighbor))
 
     def rib_query_next_multicast_hops(self, start, multicast_group_name):
+        # If the multicast group is not in the RIB, forward to the parent router
         if not multicast_group_name in self.rib_multicast_groups:
-            print(f"[{self}] Could not find multicast group '{multicast_group_name}'!")
-            return
+            if not self.parent_router:
+                print(f"Could not find multicast group '{multicast_group_name}'!")
+                return
 
-        if start.name == "router1":
-            pass
+            message = Message(
+                content=multicast_group_name,
+                type=MessageTypes.RIB_QUERY_NEXT_MULTICAST_HOPS,
+            )
+            return self.send_message(start, self.parent_router, message)
 
         multicast_group = self.rib_multicast_groups[multicast_group_name]
         next_hops = []
 
-        # If the query is from within this router's trust domain, return internal next hops
-        if start.get_trust_domain_router() == self:
+        # Check for next hops inside the trust domain
+        if multicast_group["is_member"]:
             internal_next_hops = [
                 n2 if n1 == start else n1
                 for n1, n2, _ in multicast_group["internal_edges"]
@@ -464,71 +478,65 @@ class Router(Node):
             )
             self.send_message(self, self.parent_router, message)
 
-    def rib_create_multicast_group(self, creator, group_name, lowest_common_ancestor):
+    def rib_add_multicast_group(self, creator, group_name, lowest_common_ancestor):
         self.rib_multicast_groups[group_name] = {
-            "routers": set(),
-            "external_nodes": set(),
-            "external_edges": set(),
-            "clients": set(),
-            "internal_nodes": set(),
-            "internal_edges": set(),
             "lca": lowest_common_ancestor,
+            "is_member": False,
         }
 
-        if self == lowest_common_ancestor:
-            self.rib_multicast_groups[group_name]["routers"].add(self)
-            self.rib_multicast_groups[group_name]["external_nodes"].add(self)
-
-            # Router adds client to the multicast group
-            self.rib_multicast_groups[group_name]["internal_nodes"].add(creator)
-            self.rib_multicast_groups[group_name]["clients"].add(creator)
+        if lowest_common_ancestor == self:
+            self.rib_multicast_groups[group_name]["external_members"] = set()
+            self.rib_multicast_groups[group_name]["external_nodes"] = set()
+            self.rib_multicast_groups[group_name]["external_edges"] = set()
 
         # Propagate group creation up the tree
         if self.parent_router:
             message = Message(
                 content=(group_name, lowest_common_ancestor),
-                type=MessageTypes.CREATE_MULTICAST_GROUP,
+                type=MessageTypes.ADD_MULTICAST_GROUP,
             )
             self.send_message(creator, self.parent_router, message)
 
     def rib_router_join_multicast_group(self, router, group_name):
-        # If this RIB doesn't know about the multicast group, create the group locally and send join request to parent router
+        # If the RIB doesn't know about the group, create it
         if not group_name in self.rib_multicast_groups:
             if not self.parent_router:
                 print(f"Could not find multicast group '{group_name}'!")
                 return
 
             self.rib_multicast_groups[group_name] = {
-                "routers": set(),
-                "external_nodes": set(),
-                "external_edges": set(),
-                "clients": set(),
-                "internal_nodes": set(),
+                "internal_members": set(),
+                "internal_nodes": set([self]),
                 "internal_edges": set(),
                 "lca": None,  # This router doesn't need to know the LCA router
+                "is_member": True,
             }
-
-            message = Message(
-                content=group_name, type=MessageTypes.ROUTER_JOIN_MULTICAST_GROUP
-            )
-            self.send_message(router, self.parent_router, message)
+        elif not self.rib_multicast_groups[group_name]["is_member"]:
+            multicast_group = self.rib_multicast_groups[group_name]
+            multicast_group["is_member"] = True
+            multicast_group["internal_members"] = set()
+            multicast_group["internal_nodes"] = set([self])
+            multicast_group["internal_edges"] = set()
 
         # If the current LCA is a descendant router, set this router as the new LCA
-        lca_router = self.rib_multicast_groups[group_name]["lca"]
-        if (
-            lca_router != self
-            and lca_router in self.rib_nodes
-            and lca_router != self.parent_router
-        ):
+        # TODO: This is kinda cheating, but it works
+        lca_is_descendant = False
+        tmp_router = self.rib_multicast_groups[group_name]["lca"]
+        while tmp_router:
+            tmp_router = tmp_router.parent_router
+            if tmp_router == self:
+                lca_is_descendant = True
+                break
+        if lca_is_descendant:
             # Request old LCA to move the tree to this router
             message = Message(
                 content=group_name, type=MessageTypes.MULTICAST_GROUP_TRANSFER_LCA
             )
-            routers, external_nodes, external_edges = self.send_message(
+            external_members, external_nodes, external_edges = self.send_message(
                 self, self.rib_multicast_groups[group_name]["lca"], message
             )
 
-            self.rib_multicast_groups[group_name]["routers"] = routers
+            self.rib_multicast_groups[group_name]["external_members"] = external_members
             self.rib_multicast_groups[group_name]["external_nodes"] = external_nodes
             self.rib_multicast_groups[group_name]["external_edges"] = external_edges
 
@@ -547,26 +555,25 @@ class Router(Node):
 
             # Let all other routers know that this router is the new LCA
             # TODO: This is kinda cheating, but it works
-            for router in self.rib_nodes:
-                if (
-                    isinstance(router, Router)
-                    and group_name in router.rib_multicast_groups
-                ):
-                    router.rib_multicast_groups[group_name]["lca"] = self
+            for r in self.rib_nodes:
+                if isinstance(r, Router) and group_name in r.rib_multicast_groups:
+                    r.rib_multicast_groups[group_name]["lca"] = self
 
-        # If this router is the LCA, add the router to the multicast group and compute path
+        # If this router is the LCA, add the querying router to the multicast group and compute path
         if self.rib_multicast_groups[group_name]["lca"] == self:
             # Find edges that connects the router to the multicast tree
-            nodes, edges = self.dijkstra_path_to_any_node(
-                router, self.rib_multicast_groups[group_name]["external_nodes"]
-            )
+            if len(self.rib_multicast_groups[group_name]["external_nodes"]) > 0:
+                nodes, edges = self.dijkstra_path_to_any_node(
+                    router, self.rib_multicast_groups[group_name]["external_nodes"]
+                )
 
-            # Add connecting nodes and edges to the multicast tree
-            self.rib_multicast_groups[group_name]["external_nodes"].update(nodes)
-            self.rib_multicast_groups[group_name]["external_edges"].update(edges)
+                # Add connecting nodes and edges to the multicast tree
+                self.rib_multicast_groups[group_name]["external_nodes"].update(nodes)
+                self.rib_multicast_groups[group_name]["external_edges"].update(edges)
 
             # Add router to the multicast group
-            self.rib_multicast_groups[group_name]["routers"].add(router)
+            self.rib_multicast_groups[group_name]["external_nodes"].add(router)
+            self.rib_multicast_groups[group_name]["external_members"].add(router)
 
             # Add itself to the internal multicast tree
             if len(self.rib_multicast_groups[group_name]["internal_nodes"]) > 0:
@@ -585,61 +592,32 @@ class Router(Node):
             self.send_message(router, self.parent_router, message)
 
     def rib_client_join_multicast_group(self, client, group_name):
-        # If this RIB doesn't know about the multicast group, create the group locally and send join request to parent router
-        if not group_name in self.rib_multicast_groups:
-            if not self.parent_router:
-                print(f"Could not find multicast group '{group_name}'!")
-                return
+        # Add the client's trust domain router to the external multicast group
+        self.rib_router_join_multicast_group(self.get_trust_domain_router(), group_name)
 
-            self.rib_multicast_groups[group_name] = {
-                "routers": set(),
-                "external_nodes": set(),
-                "external_edges": set(),
-                "clients": set(),
-                "internal_nodes": set(),
-                "internal_edges": set(),
-                "lca": None,  # This router doesn't need to know the LCA router
-            }
-
-            message = Message(
-                content=group_name, type=MessageTypes.ROUTER_JOIN_MULTICAST_GROUP
-            )
-            self.send_message(self, self.parent_router, message)
-
-        # Add this router to the multicast group and to internal nodes
-        self.rib_router_join_multicast_group(self, group_name)
-
+        # Find edges that connects the client to the internal multicast tree
         if len(self.rib_multicast_groups[group_name]["internal_nodes"]) > 0:
             nodes, edges = self.dijkstra_path_to_any_node(
-                self, self.rib_multicast_groups[group_name]["internal_nodes"]
+                client, self.rib_multicast_groups[group_name]["internal_nodes"]
             )
+
+            # Add connecting nodes and edges to the multicast tree
             self.rib_multicast_groups[group_name]["internal_nodes"].update(nodes)
             self.rib_multicast_groups[group_name]["internal_edges"].update(edges)
 
-        self.rib_multicast_groups[group_name]["internal_nodes"].add(self)
-
-        # Find edges that connects the client to the multicast tree
-        nodes, edges = self.dijkstra_path_to_any_node(
-            client, self.rib_multicast_groups[group_name]["internal_nodes"]
-        )
-
-        # Add connecting nodes and edges to the multicast tree
-        self.rib_multicast_groups[group_name]["internal_nodes"].update(nodes)
-        self.rib_multicast_groups[group_name]["internal_edges"].update(edges)
-
-        # Add client to the multicast group
+        # Add client to the internal multicast group
         self.rib_multicast_groups[group_name]["internal_nodes"].add(client)
-        self.rib_multicast_groups[group_name]["clients"].add(client)
+        self.rib_multicast_groups[group_name]["internal_members"].add(client)
 
     def rib_multicast_group_transfer_lca(self, new_lca_router, group_name):
-        routers = self.rib_multicast_groups[group_name]["routers"]
+        external_members = self.rib_multicast_groups[group_name]["external_members"]
         external_nodes = self.rib_multicast_groups[group_name]["external_nodes"]
         external_edges = self.rib_multicast_groups[group_name]["external_edges"]
 
         # Remove external tree from the stored multicast group
-        self.rib_multicast_groups[group_name]["routers"] = set()
-        self.rib_multicast_groups[group_name]["external_nodes"] = set()
-        self.rib_multicast_groups[group_name]["external_edges"] = set()
+        del self.rib_multicast_groups[group_name]["external_members"]
+        del self.rib_multicast_groups[group_name]["external_nodes"]
+        del self.rib_multicast_groups[group_name]["external_edges"]
 
         # Add itself to the internal multicast tree
         nodes, edges = self.dijkstra_path_to_any_node(
@@ -653,7 +631,7 @@ class Router(Node):
         self.rib_multicast_groups[group_name]["lca"] = new_lca_router
 
         # Send the routers and router edges back to the new LCA router
-        return routers, external_nodes, external_edges
+        return external_members, external_nodes, external_edges
 
 
 # Helper function
@@ -731,22 +709,26 @@ def main():
     switch3B.add_neighbor(router3B)
     client3B = Client("client3B", switch3B)
 
+    # Trust domain 3C
+    router3C = Router("router3C", router2B)
+    router3C.add_neighbor(router2B)
+    switch3C = Switch("switch3C", router3C)
+    switch3C.add_neighbor(router3C)
+    client3C = Client("client3C", switch3C)
+
+    # Add link between trust domain 3A and 3B
     router3A.add_neighbor(router3B, 1)
 
-    # Send messages
-    # client3B.send_message(
-    #     client2A, client3A, Message("Hello, world!", MessageTypes.PING)
-    # )
+    # Add link between trust domain 3B and 3C
+    router3B.add_neighbor(router3C, 1)
 
-    client3B.create_multicast_group("group1")
-    client1A.join_multicast_group("group1")
-    client3A.join_multicast_group("group1")
-    # client2A.join_multicast_group("group1")
+    # client2A.create_multicast_group("group1")
+    client3A.create_multicast_group("group1")
+    client3C.join_multicast_group("group1")
     client3A.send_multicast_message(
         client3A, "group1", Message("Hello, multicast world!", MessageTypes.PING)
     )
 
-    print(router1.rib_multicast_groups["group1"])
     print("done")
 
 
