@@ -1,4 +1,6 @@
 from enum import Enum
+import time
+import random
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
@@ -21,6 +23,7 @@ class NodeTypes(Enum):
     SWITCH = 1
     CLIENT = 2
 TOTAL_EDGE_WEIGHT = 0
+TREE_BUILD_WEIGHT = 0
 
 class Message:
     def __init__(self, content, type: MessageTypes):
@@ -41,6 +44,7 @@ class Node:
         self.neighbors = set()
         self.routing_table = {self: (None, 0)}
         self.multicast_routing_table = {}
+        self.type = -1
 
     def get_trust_domain_router(self):
         return self if isinstance(self, Router) else self.parent_router
@@ -138,7 +142,7 @@ class Node:
         for nh in destinations:
             if self.type == NodeTypes.ROUTER and nh.type == NodeTypes.ROUTER:
                 TOTAL_EDGE_WEIGHT += 100
-                print("CROSS")
+                print(f"CROSS {self.name} {nh.name}")
             else:
                 TOTAL_EDGE_WEIGHT += 10
                 print(self.name, nh.name)
@@ -176,6 +180,7 @@ class Node:
 class Switch(Node):
     def __init__(self, name, parent_router):
         super().__init__(name, parent_router)
+        self.type = NodeTypes.SWITCH
 
 
 class Client(Node):
@@ -190,6 +195,7 @@ class Client(Node):
 
         # Register the connected node as a neighbor
         self.add_neighbor(node_connected_to)
+        self.type = NodeTypes.CLIENT
 
     def handle_message(self, source, message):
         super().handle_message(source, message)
@@ -219,6 +225,8 @@ class Router(Node):
         self.rib_edges = set()
         self.rib_child_router_ownerships = {}
         self.rib_multicast_groups = {}
+        
+        self.type = NodeTypes.ROUTER
 
     def get_next_hop(self, destination):
         if destination not in self.routing_table:
@@ -595,6 +603,8 @@ class Router(Node):
 
         # Else, forward the join request to the parent router
         else:
+            global TREE_BUILD_WEIGHT #TODO: FIGURE OUT DIJKSTRA OVERHEAD
+            TREE_BUILD_WEIGHT += 100
             message = Message(
                 content=group_name, type=MessageTypes.ROUTER_JOIN_MULTICAST_GROUP
             )
@@ -767,14 +777,21 @@ def main():
         add_clients(tlr, curr_idx)
         curr_idx +=1
     
-    #print(len(first_layer_routers), len(second_layer_routers), len(third_layer_routers), len(clients))
+    print(len(first_layer_routers), len(second_layer_routers), len(third_layer_routers), len(clients))
     
+    #TREE BUILDING GOES HERE
+    tree_build_start_time = time.time()
+
     sender_client = clients[0]
     sender_client.create_multicast_group("group1")
     
     recipients = clients[-10:]
     for rec in recipients:
         rec.join_multicast_group("group1")
+        
+    tree_build_end_time = time.time()
+    tree_build_time = tree_build_end_time - tree_build_start_time
+    print(tree_build_time)
     
     print("SENDING")
     for i in range(0, 1):
@@ -783,7 +800,7 @@ def main():
         )
 
     print("done")
-    print(TOTAL_EDGE_WEIGHT)
+    print(TOTAL_EDGE_WEIGHT, TREE_BUILD_WEIGHT)
 
 
 main()
