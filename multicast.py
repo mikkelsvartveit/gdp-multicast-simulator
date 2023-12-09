@@ -16,6 +16,11 @@ class MessageTypes(Enum):
     RIB_QUERY_NEXT_MULTICAST_HOPS = 8
     MULTICAST_GROUP_TRANSFER_LCA = 9
 
+class NodeTypes(Enum):
+    ROUTER = 0
+    SWITCH = 1
+    CLIENT = 2
+TOTAL_EDGE_WEIGHT = 0
 
 class Message:
     def __init__(self, content, type: MessageTypes):
@@ -128,6 +133,15 @@ class Node:
 
         destinations = [next_hop for next_hop in next_hops if next_hop not in visited]
         pass
+    
+        global TOTAL_EDGE_WEIGHT
+        for nh in destinations:
+            if self.type == NodeTypes.ROUTER and nh.type == NodeTypes.ROUTER:
+                TOTAL_EDGE_WEIGHT += 100
+                print("CROSS")
+            else:
+                TOTAL_EDGE_WEIGHT += 10
+                print(self.name, nh.name)
 
         return [
             destination.receive_multicast_message(
@@ -675,56 +689,101 @@ def main():
     # Enable to print every message received at any node. Disable to only print messages received at clients.
     global DEBUG
 
-    # Trust domain 1
-    router1 = Router("router1", None)
-    client1A = Client("client1A", router1)
+    routerRoot = Router("RouterRoot", None)
+    
+    first_layer_routers = []
+    for i in range(3):
+        curr_router = Router(f"FirstLayerRouter{i + 1}", parent_router=routerRoot)
+        curr_router.add_neighbor(routerRoot)
+        first_layer_routers.append(curr_router)
 
-    # Trust domain 2A
-    router2A = Router("router2A", router1)
-    router2A.add_neighbor(router1)
-    switch2A = Switch("switch2A", router2A)
-    switch2A.add_neighbor(router2A)
-    client2A = Client("client2A", switch2A)
-
-    # Trust domain 2B
-    router2B = Router("router2B", router1)
-    router2B.add_neighbor(router1)
-
-    # Trust domain 3A
-    router3A = Router("router3A", router2A)
-    router3A.add_neighbor(router2A)
-    switch3A = Switch("switch3A", router3A)
-    switch3A.add_neighbor(router3A)
-    client3A = Client("client3A", switch3A)
-
-    # Trust domain 3B
-    router3B = Router("router3B", router2B)
-    router3B.add_neighbor(router2B)
-    switch3B = Switch("switch3B", router3B)
-    switch3B.add_neighbor(router3B)
-    client3B = Client("client3B", switch3B)
-
-    # Trust domain 3C
-    router3C = Router("router3C", router2B)
-    router3C.add_neighbor(router2B)
-    switch3C = Switch("switch3C", router3C)
-    switch3C.add_neighbor(router3C)
-    client3C = Client("client3C", switch3C)
-
-    # Add link between trust domain 3A and 3B
-    router3A.add_neighbor(router3B, 1)
-
-    # Add link between trust domain 3B and 3C
-    router3B.add_neighbor(router3C, 1)
-
-    # client2A.create_multicast_group("group1")
-    client3A.create_multicast_group("group1")
-    client3C.join_multicast_group("group1")
-    client3A.send_multicast_message(
-        client3A, "group1", Message("Hello, multicast world!", MessageTypes.PING)
-    )
+    second_layer_routers = []
+    for flr in first_layer_routers:
+        for i in range(4):
+            curr_router = Router(f"SecondLayerRouter{i + 1}", parent_router=flr)
+            curr_router.add_neighbor(flr)
+            second_layer_routers.append(curr_router)
+            
+    third_layer_routers = []
+    for slr in second_layer_routers:
+        for i in range(7):
+            curr_router = Router(f"ThirdLayerRouter{i + 1}", parent_router=slr)
+            curr_router.add_neighbor(slr)
+            third_layer_routers.append(curr_router)
+            
+    clients = []
+    
+    def add_clients(base_router, idx):
+        switch1 = Switch(f"FLswitch1A_{idx}", parent_router=base_router)
+        switch1.add_neighbor(base_router)
+        client1A = Client(f"FLclient1A_{idx}", switch1)
+        client2A = Client(f"FLclient2A_{idx}", switch1)
+        
+        switch2 = Switch(f"FLswitch2A_{idx}", parent_router=base_router)
+        switch2.add_neighbor(base_router)
+        client3A = Client(f"FLclient3A_{idx}", switch2)
+        client4A = Client(f"FLclient4A_{idx}", switch2)
+        
+        switch3 = Switch(f"FLswitch3A_{idx}", parent_router=base_router)
+        switch3.add_neighbor(base_router)
+        client5A = Client(f"FLclient5A_{idx}", switch3)
+        client6A = Client(f"FLclient6A_{idx}", switch3)
+        
+        switch4 = Switch(f"FLswitch4A_{idx}", parent_router=base_router)
+        switch4.add_neighbor(base_router)
+        client7A = Client(f"FLclient7A_{idx}", switch4)
+        client8A = Client(f"FLclient8A_{idx}", switch4)
+        
+        switch5 = Switch(f"FLswitch5A_{idx}", parent_router=base_router)
+        switch5.add_neighbor(base_router)
+        client9A = Client(f"FLclient9A_{idx}", switch5)
+        client10A = Client(f"FLclient10A_{idx}", switch5)
+                     
+        clients.append(client1A)
+        clients.append(client2A)
+        clients.append(client3A)
+        clients.append(client4A)
+        clients.append(client5A)
+        clients.append(client6A)
+        clients.append(client7A)
+        clients.append(client8A)
+        clients.append(client9A)
+        clients.append(client10A)
+        
+    curr_idx = 0
+    
+    add_clients(routerRoot, curr_idx)
+    curr_idx += 1
+    
+    for flr in first_layer_routers:
+        add_clients(flr, curr_idx)
+        curr_idx +=1
+        
+    for slr in second_layer_routers:
+        add_clients(slr, curr_idx)
+        curr_idx +=1
+    
+    for tlr in third_layer_routers:
+        add_clients(tlr, curr_idx)
+        curr_idx +=1
+    
+    #print(len(first_layer_routers), len(second_layer_routers), len(third_layer_routers), len(clients))
+    
+    sender_client = clients[0]
+    sender_client.create_multicast_group("group1")
+    
+    recipients = clients[-10:]
+    for rec in recipients:
+        rec.join_multicast_group("group1")
+    
+    print("SENDING")
+    for i in range(0, 1):
+        sender_client.send_multicast_message(
+            sender_client, "group1", Message("Hello from client1A!", MessageTypes.PING)
+        )
 
     print("done")
+    print(TOTAL_EDGE_WEIGHT)
 
 
 main()
