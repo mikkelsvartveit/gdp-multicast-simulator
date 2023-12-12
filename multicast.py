@@ -2,6 +2,7 @@ from enum import Enum
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
+USE_ENCRYPTION = True
 
 
 class MessageTypes(Enum):
@@ -15,6 +16,8 @@ class MessageTypes(Enum):
     ROUTER_JOIN_MULTICAST_GROUP = 7
     RIB_QUERY_NEXT_MULTICAST_HOPS = 8
     MULTICAST_GROUP_TRANSFER_LCA = 9
+    MULTICAST_GROUP_REQUEST_CREDENTIALS = 10
+    MULTICAST_GROUP_SEND_CREDENTIALS = 11
 
 
 class Message:
@@ -150,7 +153,18 @@ class Node:
             )
 
     def handle_message(self, source, message):
-        print(f"[{self}] Received message from {source}: {message}")
+        if message.type == MessageTypes.MULTICAST_GROUP_REQUEST_CREDENTIALS:
+            # Respond with credentials
+            message = Message(
+                content=(),
+                type=MessageTypes.MULTICAST_GROUP_SEND_CREDENTIALS,
+            )
+            self.send_message(self, source, message)
+        elif message.type == MessageTypes.MULTICAST_GROUP_SEND_CREDENTIALS:
+            print(f"[{self}] Received credentials from {source}.")
+            pass
+        else:
+            print(f"[{self}] Received message from {source}: {message}")
 
     def __str__(self):
         return self.name
@@ -182,17 +196,27 @@ class Client(Node):
 
     def create_multicast_group(self, group_name):
         message = Message(
-            content=(group_name, self.get_trust_domain_router()),
+            content=(group_name, self.get_trust_domain_router(), self),
             type=MessageTypes.CLIENT_CREATE_MULTICAST_GROUP,
         )
         self.send_message(self, self.parent_router, message)
         self.multicast_groups.add(group_name)
 
     def join_multicast_group(self, group_name):
+        # Send message to the trust domain router
         message = Message(
             content=group_name, type=MessageTypes.CLIENT_JOIN_MULTICAST_GROUP
         )
-        self.send_message(self, self.parent_router, message)
+        owner = self.send_message(self, self.parent_router, message)
+
+        if USE_ENCRYPTION:
+            # Send message to the multicast group owner to get credentials
+            message = Message(
+                content=group_name,
+                type=MessageTypes.MULTICAST_GROUP_REQUEST_CREDENTIALS,
+            )
+            self.send_message(self, owner, message)
+
         self.multicast_groups.add(group_name)
 
 
@@ -255,12 +279,16 @@ class Router(Node):
             self.rib_add_ownership(router, node)
 
         elif message.type == MessageTypes.ADD_MULTICAST_GROUP:
-            group_name, lowest_common_ancestor = message.content
-            self.rib_add_multicast_group(source, group_name, lowest_common_ancestor)
+            group_name, lowest_common_ancestor, owner = message.content
+            self.rib_add_multicast_group(
+                source, group_name, lowest_common_ancestor, owner
+            )
 
         elif message.type == MessageTypes.CLIENT_CREATE_MULTICAST_GROUP:
-            group_name, lowest_common_ancestor = message.content
-            self.rib_add_multicast_group(source, group_name, lowest_common_ancestor)
+            group_name, lowest_common_ancestor, owner = message.content
+            self.rib_add_multicast_group(
+                source, group_name, lowest_common_ancestor, owner=source
+            )
             self.rib_router_join_multicast_group(
                 source.get_trust_domain_router(), group_name
             )
@@ -268,11 +296,13 @@ class Router(Node):
 
         elif message.type == MessageTypes.CLIENT_JOIN_MULTICAST_GROUP:
             group_name = message.content
-            self.rib_client_join_multicast_group(source, group_name)
+            owner = self.rib_client_join_multicast_group(source, group_name)
+            return owner
 
         elif message.type == MessageTypes.ROUTER_JOIN_MULTICAST_GROUP:
             group_name = message.content
-            self.rib_router_join_multicast_group(source, group_name)
+            owner = self.rib_router_join_multicast_group(source, group_name)
+            return owner
 
         elif message.type == MessageTypes.MULTICAST_GROUP_TRANSFER_LCA:
             group_name = message.content
@@ -473,10 +503,13 @@ class Router(Node):
             )
             self.send_message(self, self.parent_router, message)
 
-    def rib_add_multicast_group(self, creator, group_name, lowest_common_ancestor):
+    def rib_add_multicast_group(
+        self, creator, group_name, lowest_common_ancestor, owner
+    ):
         self.rib_multicast_groups[group_name] = {
             "lca": lowest_common_ancestor,
             "is_member": False,
+            "owner": owner,
         }
 
         if lowest_common_ancestor == self:
@@ -487,7 +520,7 @@ class Router(Node):
         # Propagate group creation up the tree
         if self.parent_router:
             message = Message(
-                content=(group_name, lowest_common_ancestor),
+                content=(group_name, lowest_common_ancestor, owner),
                 type=MessageTypes.ADD_MULTICAST_GROUP,
             )
             self.send_message(creator, self.parent_router, message)
@@ -579,16 +612,25 @@ class Router(Node):
                 self.rib_multicast_groups[group_name]["internal_edges"].update(edges)
             self.rib_multicast_groups[group_name]["internal_nodes"].add(self)
 
+            return self.rib_multicast_groups[group_name]["owner"]
+
         # Else, forward the join request to the parent router
         else:
             message = Message(
-                content=group_name, type=MessageTypes.ROUTER_JOIN_MULTICAST_GROUP
+                content=group_name,
+                type=MessageTypes.ROUTER_JOIN_MULTICAST_GROUP,
             )
-            self.send_message(router, self.parent_router, message)
+            owner = self.send_message(router, self.parent_router, message)
+            self.rib_multicast_groups[group_name]["owner"] = owner
+
+            return owner
 
     def rib_client_join_multicast_group(self, client, group_name):
         # Add the client's trust domain router to the external multicast group
-        self.rib_router_join_multicast_group(self.get_trust_domain_router(), group_name)
+        owner = self.rib_router_join_multicast_group(
+            self.get_trust_domain_router(),
+            group_name,
+        )
 
         # Find edges that connects the client to the internal multicast tree
         if len(self.rib_multicast_groups[group_name]["internal_nodes"]) > 0:
@@ -603,6 +645,9 @@ class Router(Node):
         # Add client to the internal multicast group
         self.rib_multicast_groups[group_name]["internal_nodes"].add(client)
         self.rib_multicast_groups[group_name]["internal_members"].add(client)
+
+        # Return the owner of the multicast group
+        return owner
 
     def rib_multicast_group_transfer_lca(self, new_lca_router, group_name):
         external_members = self.rib_multicast_groups[group_name]["external_members"]
@@ -717,11 +762,15 @@ def main():
     # Add link between trust domain 3B and 3C
     router3B.add_neighbor(router3C, 1)
 
-    # client2A.create_multicast_group("group1")
+    # # client2A.create_multicast_group("group1")
     client3A.create_multicast_group("group1")
     client3C.join_multicast_group("group1")
     client3A.send_multicast_message(
         client3A, "group1", Message("Hello, multicast world!", MessageTypes.PING)
+    )
+
+    client3A.send_message(
+        client3A, client3C, Message("Hello, world!", MessageTypes.PING)
     )
 
     print("done")
