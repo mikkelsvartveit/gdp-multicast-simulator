@@ -4,6 +4,7 @@ import random
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
+USE_ENCRYPTION = True
 
 
 class MessageTypes(Enum):
@@ -17,13 +18,19 @@ class MessageTypes(Enum):
     ROUTER_JOIN_MULTICAST_GROUP = 7
     RIB_QUERY_NEXT_MULTICAST_HOPS = 8
     MULTICAST_GROUP_TRANSFER_LCA = 9
+    MULTICAST_GROUP_REQUEST_CREDENTIALS = 10
+    MULTICAST_GROUP_SEND_CREDENTIALS = 11
+
 
 class NodeTypes(Enum):
     ROUTER = 0
     SWITCH = 1
     CLIENT = 2
+
+
 TOTAL_EDGE_WEIGHT = 0
 TREE_BUILD_WEIGHT = 0
+
 
 class Message:
     def __init__(self, content, type: MessageTypes):
@@ -137,7 +144,7 @@ class Node:
 
         destinations = [next_hop for next_hop in next_hops if next_hop not in visited]
         pass
-    
+
         global TOTAL_EDGE_WEIGHT
         for nh in destinations:
             if self.type == NodeTypes.ROUTER and nh.type == NodeTypes.ROUTER:
@@ -168,7 +175,18 @@ class Node:
             )
 
     def handle_message(self, source, message):
-        print(f"[{self}] Received message from {source}: {message}")
+        if message.type == MessageTypes.MULTICAST_GROUP_REQUEST_CREDENTIALS:
+            # Respond with credentials
+            message = Message(
+                content=(),
+                type=MessageTypes.MULTICAST_GROUP_SEND_CREDENTIALS,
+            )
+            self.send_message(self, source, message)
+        elif message.type == MessageTypes.MULTICAST_GROUP_SEND_CREDENTIALS:
+            print(f"[{self}] Received credentials from {source}.")
+            pass
+        else:
+            print(f"[{self}] Received message from {source}: {message}")
 
     def __str__(self):
         return self.name
@@ -202,17 +220,27 @@ class Client(Node):
 
     def create_multicast_group(self, group_name):
         message = Message(
-            content=(group_name, self.get_trust_domain_router()),
+            content=(group_name, self.get_trust_domain_router(), self),
             type=MessageTypes.CLIENT_CREATE_MULTICAST_GROUP,
         )
         self.send_message(self, self.parent_router, message)
         self.multicast_groups.add(group_name)
 
     def join_multicast_group(self, group_name):
+        # Send message to the trust domain router
         message = Message(
             content=group_name, type=MessageTypes.CLIENT_JOIN_MULTICAST_GROUP
         )
-        self.send_message(self, self.parent_router, message)
+        owner = self.send_message(self, self.parent_router, message)
+
+        if USE_ENCRYPTION:
+            # Send message to the multicast group owner to get credentials
+            message = Message(
+                content=group_name,
+                type=MessageTypes.MULTICAST_GROUP_REQUEST_CREDENTIALS,
+            )
+            self.send_message(self, owner, message)
+
         self.multicast_groups.add(group_name)
 
 
@@ -225,7 +253,7 @@ class Router(Node):
         self.rib_edges = set()
         self.rib_child_router_ownerships = {}
         self.rib_multicast_groups = {}
-        
+
         self.type = NodeTypes.ROUTER
 
     def get_next_hop(self, destination):
@@ -277,12 +305,16 @@ class Router(Node):
             self.rib_add_ownership(router, node)
 
         elif message.type == MessageTypes.ADD_MULTICAST_GROUP:
-            group_name, lowest_common_ancestor = message.content
-            self.rib_add_multicast_group(source, group_name, lowest_common_ancestor)
+            group_name, lowest_common_ancestor, owner = message.content
+            self.rib_add_multicast_group(
+                source, group_name, lowest_common_ancestor, owner
+            )
 
         elif message.type == MessageTypes.CLIENT_CREATE_MULTICAST_GROUP:
-            group_name, lowest_common_ancestor = message.content
-            self.rib_add_multicast_group(source, group_name, lowest_common_ancestor)
+            group_name, lowest_common_ancestor, owner = message.content
+            self.rib_add_multicast_group(
+                source, group_name, lowest_common_ancestor, owner=source
+            )
             self.rib_router_join_multicast_group(
                 source.get_trust_domain_router(), group_name
             )
@@ -290,11 +322,13 @@ class Router(Node):
 
         elif message.type == MessageTypes.CLIENT_JOIN_MULTICAST_GROUP:
             group_name = message.content
-            self.rib_client_join_multicast_group(source, group_name)
+            owner = self.rib_client_join_multicast_group(source, group_name)
+            return owner
 
         elif message.type == MessageTypes.ROUTER_JOIN_MULTICAST_GROUP:
             group_name = message.content
-            self.rib_router_join_multicast_group(source, group_name)
+            owner = self.rib_router_join_multicast_group(source, group_name)
+            return owner
 
         elif message.type == MessageTypes.MULTICAST_GROUP_TRANSFER_LCA:
             group_name = message.content
@@ -495,10 +529,13 @@ class Router(Node):
             )
             self.send_message(self, self.parent_router, message)
 
-    def rib_add_multicast_group(self, creator, group_name, lowest_common_ancestor):
+    def rib_add_multicast_group(
+        self, creator, group_name, lowest_common_ancestor, owner
+    ):
         self.rib_multicast_groups[group_name] = {
             "lca": lowest_common_ancestor,
             "is_member": False,
+            "owner": owner,
         }
 
         if lowest_common_ancestor == self:
@@ -509,7 +546,7 @@ class Router(Node):
         # Propagate group creation up the tree
         if self.parent_router:
             message = Message(
-                content=(group_name, lowest_common_ancestor),
+                content=(group_name, lowest_common_ancestor, owner),
                 type=MessageTypes.ADD_MULTICAST_GROUP,
             )
             self.send_message(creator, self.parent_router, message)
@@ -601,18 +638,27 @@ class Router(Node):
                 self.rib_multicast_groups[group_name]["internal_edges"].update(edges)
             self.rib_multicast_groups[group_name]["internal_nodes"].add(self)
 
+            return self.rib_multicast_groups[group_name]["owner"]
+
         # Else, forward the join request to the parent router
         else:
-            global TREE_BUILD_WEIGHT #TODO: FIGURE OUT DIJKSTRA OVERHEAD
+            global TREE_BUILD_WEIGHT  # TODO: FIGURE OUT DIJKSTRA OVERHEAD
             TREE_BUILD_WEIGHT += 100
             message = Message(
-                content=group_name, type=MessageTypes.ROUTER_JOIN_MULTICAST_GROUP
+                content=group_name,
+                type=MessageTypes.ROUTER_JOIN_MULTICAST_GROUP,
             )
-            self.send_message(router, self.parent_router, message)
+            owner = self.send_message(router, self.parent_router, message)
+            self.rib_multicast_groups[group_name]["owner"] = owner
+
+            return owner
 
     def rib_client_join_multicast_group(self, client, group_name):
         # Add the client's trust domain router to the external multicast group
-        self.rib_router_join_multicast_group(self.get_trust_domain_router(), group_name)
+        owner = self.rib_router_join_multicast_group(
+            self.get_trust_domain_router(),
+            group_name,
+        )
 
         # Find edges that connects the client to the internal multicast tree
         if len(self.rib_multicast_groups[group_name]["internal_nodes"]) > 0:
@@ -627,6 +673,9 @@ class Router(Node):
         # Add client to the internal multicast group
         self.rib_multicast_groups[group_name]["internal_nodes"].add(client)
         self.rib_multicast_groups[group_name]["internal_members"].add(client)
+
+        # Return the owner of the multicast group
+        return owner
 
     def rib_multicast_group_transfer_lca(self, new_lca_router, group_name):
         external_members = self.rib_multicast_groups[group_name]["external_members"]
@@ -700,7 +749,7 @@ def main():
     global DEBUG
 
     routerRoot = Router("RouterRoot", None)
-    
+
     first_layer_routers = []
     for i in range(3):
         curr_router = Router(f"FirstLayerRouter{i + 1}", parent_router=routerRoot)
@@ -713,42 +762,42 @@ def main():
             curr_router = Router(f"SecondLayerRouter{i + 1}", parent_router=flr)
             curr_router.add_neighbor(flr)
             second_layer_routers.append(curr_router)
-            
+
     third_layer_routers = []
     for slr in second_layer_routers:
         for i in range(7):
             curr_router = Router(f"ThirdLayerRouter{i + 1}", parent_router=slr)
             curr_router.add_neighbor(slr)
             third_layer_routers.append(curr_router)
-            
+
     clients = []
-    
+
     def add_clients(base_router, idx):
         switch1 = Switch(f"FLswitch1A_{idx}", parent_router=base_router)
         switch1.add_neighbor(base_router)
         client1A = Client(f"FLclient1A_{idx}", switch1)
         client2A = Client(f"FLclient2A_{idx}", switch1)
-        
+
         switch2 = Switch(f"FLswitch2A_{idx}", parent_router=base_router)
         switch2.add_neighbor(base_router)
         client3A = Client(f"FLclient3A_{idx}", switch2)
         client4A = Client(f"FLclient4A_{idx}", switch2)
-        
+
         switch3 = Switch(f"FLswitch3A_{idx}", parent_router=base_router)
         switch3.add_neighbor(base_router)
         client5A = Client(f"FLclient5A_{idx}", switch3)
         client6A = Client(f"FLclient6A_{idx}", switch3)
-        
+
         switch4 = Switch(f"FLswitch4A_{idx}", parent_router=base_router)
         switch4.add_neighbor(base_router)
         client7A = Client(f"FLclient7A_{idx}", switch4)
         client8A = Client(f"FLclient8A_{idx}", switch4)
-        
+
         switch5 = Switch(f"FLswitch5A_{idx}", parent_router=base_router)
         switch5.add_neighbor(base_router)
         client9A = Client(f"FLclient9A_{idx}", switch5)
         client10A = Client(f"FLclient10A_{idx}", switch5)
-                     
+
         clients.append(client1A)
         clients.append(client2A)
         clients.append(client3A)
@@ -759,40 +808,45 @@ def main():
         clients.append(client8A)
         clients.append(client9A)
         clients.append(client10A)
-        
+
     curr_idx = 0
-    
+
     add_clients(routerRoot, curr_idx)
     curr_idx += 1
-    
+
     for flr in first_layer_routers:
         add_clients(flr, curr_idx)
-        curr_idx +=1
-        
+        curr_idx += 1
+
     for slr in second_layer_routers:
         add_clients(slr, curr_idx)
-        curr_idx +=1
-    
+        curr_idx += 1
+
     for tlr in third_layer_routers:
         add_clients(tlr, curr_idx)
-        curr_idx +=1
-    
-    print(len(first_layer_routers), len(second_layer_routers), len(third_layer_routers), len(clients))
-    
-    #TREE BUILDING GOES HERE
+        curr_idx += 1
+
+    print(
+        len(first_layer_routers),
+        len(second_layer_routers),
+        len(third_layer_routers),
+        len(clients),
+    )
+
+    # TREE BUILDING GOES HERE
     tree_build_start_time = time.time()
 
     sender_client = clients[0]
     sender_client.create_multicast_group("group1")
-    
+
     recipients = clients[-10:]
     for rec in recipients:
         rec.join_multicast_group("group1")
-        
+
     tree_build_end_time = time.time()
     tree_build_time = tree_build_end_time - tree_build_start_time
     print(tree_build_time)
-    
+
     print("SENDING")
     for i in range(0, 1):
         sender_client.send_multicast_message(
