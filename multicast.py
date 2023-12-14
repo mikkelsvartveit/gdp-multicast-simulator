@@ -4,7 +4,7 @@ import random
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
-USE_ENCRYPTION = True
+USE_ENCRYPTION = False
 
 
 class MessageTypes(Enum):
@@ -127,6 +127,15 @@ class Node:
 
     def send_message(self, source, destination, message):
         next_hop = self.get_next_hop(destination=destination)[0]
+        global TOTAL_EDGE_WEIGHT
+
+        if self.type == NodeTypes.ROUTER and next_hop.type == NodeTypes.ROUTER:
+            TOTAL_EDGE_WEIGHT += 100
+            print(f"CROSS {self.name} {next_hop.name}")
+        else:
+            TOTAL_EDGE_WEIGHT += 1
+            print(self.name, next_hop.name)
+
         return next_hop.receive_message(source, destination, message)
 
     def receive_message(self, source, destination, message):
@@ -151,7 +160,7 @@ class Node:
                 TOTAL_EDGE_WEIGHT += 100
                 print(f"CROSS {self.name} {nh.name}")
             else:
-                TOTAL_EDGE_WEIGHT += 10
+                TOTAL_EDGE_WEIGHT += 1
                 print(self.name, nh.name)
 
         return [
@@ -833,28 +842,35 @@ def main():
         len(clients),
     )
 
+    # Reset total edge cost after setting up the network
+    global TOTAL_EDGE_WEIGHT
+    TOTAL_EDGE_WEIGHT = 0
+
     # TREE BUILDING GOES HERE
     tree_build_start_time = time.time()
 
     sender_client = clients[0]
     sender_client.create_multicast_group("group1")
 
-    recipients = clients[-10:]
+    # Set seed to get the same recipients every time
+    random.seed(123)
+    recipients = random.sample(clients, 10)
+
     for rec in recipients:
         rec.join_multicast_group("group1")
 
     tree_build_end_time = time.time()
     tree_build_time = tree_build_end_time - tree_build_start_time
-    print(tree_build_time)
+    # print(tree_build_time)
 
     print("SENDING")
-    for i in range(0, 1):
+    for i in range(1):
         sender_client.send_multicast_message(
             sender_client, "group1", Message("Hello from client1A!", MessageTypes.PING)
         )
 
     print("done")
-    print(TOTAL_EDGE_WEIGHT, TREE_BUILD_WEIGHT)
+    print(TOTAL_EDGE_WEIGHT)
 
 
 main()
