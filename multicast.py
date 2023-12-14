@@ -4,7 +4,7 @@ import random
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
-USE_ENCRYPTION = False
+USE_ENCRYPTION = True
 
 
 class MessageTypes(Enum):
@@ -131,10 +131,10 @@ class Node:
 
         if self.type == NodeTypes.ROUTER and next_hop.type == NodeTypes.ROUTER:
             TOTAL_EDGE_WEIGHT += 100
-            print(f"CROSS {self.name} {next_hop.name}")
+            #print(f"CROSS {self.name} {next_hop.name}")
         else:
             TOTAL_EDGE_WEIGHT += 1
-            print(self.name, next_hop.name)
+            #print(self.name, next_hop.name)
 
         return next_hop.receive_message(source, destination, message)
 
@@ -158,10 +158,10 @@ class Node:
         for nh in destinations:
             if self.type == NodeTypes.ROUTER and nh.type == NodeTypes.ROUTER:
                 TOTAL_EDGE_WEIGHT += 100
-                print(f"CROSS {self.name} {nh.name}")
+                #print(f"CROSS {self.name} {nh.name}")
             else:
                 TOTAL_EDGE_WEIGHT += 1
-                print(self.name, nh.name)
+                #print(self.name, nh.name)
 
         return [
             destination.receive_multicast_message(
@@ -192,10 +192,11 @@ class Node:
             )
             self.send_message(self, source, message)
         elif message.type == MessageTypes.MULTICAST_GROUP_SEND_CREDENTIALS:
-            print(f"[{self}] Received credentials from {source}.")
+            #print(f"[{self}] Received credentials from {source}.")
             pass
         else:
-            print(f"[{self}] Received message from {source}: {message}")
+            #print(f"[{self}] Received message from {source}: {message}")
+            pass
 
     def __str__(self):
         return self.name
@@ -687,14 +688,17 @@ class Router(Node):
         return owner
 
     def rib_multicast_group_transfer_lca(self, new_lca_router, group_name):
-        external_members = self.rib_multicast_groups[group_name]["external_members"]
-        external_nodes = self.rib_multicast_groups[group_name]["external_nodes"]
-        external_edges = self.rib_multicast_groups[group_name]["external_edges"]
+        external_members = self.rib_multicast_groups[group_name].get("external_members", set())
+        external_nodes = self.rib_multicast_groups[group_name].get("external_nodes", set())
+        external_edges = self.rib_multicast_groups[group_name].get("external_edges", set())
 
         # Remove external tree from the stored multicast group
-        del self.rib_multicast_groups[group_name]["external_members"]
-        del self.rib_multicast_groups[group_name]["external_nodes"]
-        del self.rib_multicast_groups[group_name]["external_edges"]
+        if "external_members" in self.rib_multicast_groups[group_name]:
+            del self.rib_multicast_groups[group_name]["external_members"]
+        if "external_nodes" in self.rib_multicast_groups[group_name]:
+            del self.rib_multicast_groups[group_name]["external_nodes"]
+        if "external_edges" in self.rib_multicast_groups[group_name]:
+            del self.rib_multicast_groups[group_name]["external_edges"]
 
         # Add itself to the internal multicast tree
         nodes, edges = self.dijkstra_path_to_any_node(
@@ -849,28 +853,30 @@ def main():
     # TREE BUILDING GOES HERE
     tree_build_start_time = time.time()
 
-    sender_client = clients[0]
-    sender_client.create_multicast_group("group1")
-
     # Set seed to get the same recipients every time
     random.seed(123)
-    recipients = random.sample(clients, 10)
+    
+    NUM_MSG = 1
+    sum_weights = 0
+    for i in range(1000):
+        recipients = random.sample(clients, 10)
+        
+        sender_client = recipients[0]
+        sender_client.create_multicast_group("group1")
 
-    for rec in recipients:
-        rec.join_multicast_group("group1")
+        for rec in recipients[1:]:
+            rec.join_multicast_group("group1")
 
-    tree_build_end_time = time.time()
-    tree_build_time = tree_build_end_time - tree_build_start_time
-    # print(tree_build_time)
+        #print("SENDING")
+        for _ in range(NUM_MSG):
+            sender_client.send_multicast_message(
+                sender_client, "group1", Message("Hello from client1A!", MessageTypes.PING)
+            )
 
-    print("SENDING")
-    for i in range(1):
-        sender_client.send_multicast_message(
-            sender_client, "group1", Message("Hello from client1A!", MessageTypes.PING)
-        )
-
-    print("done")
-    print(TOTAL_EDGE_WEIGHT)
-
+        #print("done")
+        #print(TOTAL_EDGE_WEIGHT)
+        sum_weights += TOTAL_EDGE_WEIGHT
+        print(i)
+    print(sum_weights/1000)
 
 main()
