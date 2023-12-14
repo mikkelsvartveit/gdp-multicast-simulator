@@ -30,6 +30,7 @@ class NodeTypes(Enum):
 
 TOTAL_EDGE_WEIGHT = 0
 TREE_BUILD_WEIGHT = 0
+ROUTER_ROOT_MESSAGES = 0
 
 
 class Message:
@@ -128,13 +129,17 @@ class Node:
     def send_message(self, source, destination, message):
         next_hop = self.get_next_hop(destination=destination)[0]
         global TOTAL_EDGE_WEIGHT
+        global ROUTER_ROOT_MESSAGES
+
+        if str(self) == "RouterRoot":
+            ROUTER_ROOT_MESSAGES += 1
 
         if self.type == NodeTypes.ROUTER and next_hop.type == NodeTypes.ROUTER:
             TOTAL_EDGE_WEIGHT += 100
-            print(f"CROSS {self.name} {next_hop.name}")
+            # print(f"CROSS {self.name} {next_hop.name}")
         else:
             TOTAL_EDGE_WEIGHT += 1
-            print(self.name, next_hop.name)
+            # print(self.name, next_hop.name)
 
         return next_hop.receive_message(source, destination, message)
 
@@ -154,14 +159,18 @@ class Node:
         destinations = [next_hop for next_hop in next_hops if next_hop not in visited]
         pass
 
+        global ROUTER_ROOT_MESSAGES
+        if str(self) == "RouterRoot":
+            ROUTER_ROOT_MESSAGES += len(destinations)
+
         global TOTAL_EDGE_WEIGHT
         for nh in destinations:
             if self.type == NodeTypes.ROUTER and nh.type == NodeTypes.ROUTER:
                 TOTAL_EDGE_WEIGHT += 100
-                print(f"CROSS {self.name} {nh.name}")
+                # print(f"CROSS {self.name} {nh.name}")
             else:
                 TOTAL_EDGE_WEIGHT += 1
-                print(self.name, nh.name)
+                # print(self.name, nh.name)
 
         return [
             destination.receive_multicast_message(
@@ -192,10 +201,11 @@ class Node:
             )
             self.send_message(self, source, message)
         elif message.type == MessageTypes.MULTICAST_GROUP_SEND_CREDENTIALS:
-            print(f"[{self}] Received credentials from {source}.")
+            # print(f"[{self}] Received credentials from {source}.")
             pass
         else:
-            print(f"[{self}] Received message from {source}: {message}")
+            # print(f"[{self}] Received message from {source}: {message}")
+            pass
 
     def __str__(self):
         return self.name
@@ -757,120 +767,156 @@ def main():
     # Enable to print every message received at any node. Disable to only print messages received at clients.
     global DEBUG
 
-    routerRoot = Router("RouterRoot", None)
+    total_root_messages = 0
 
-    first_layer_routers = []
-    for i in range(3):
-        curr_router = Router(f"FirstLayerRouter{i + 1}", parent_router=routerRoot)
-        curr_router.add_neighbor(routerRoot)
-        first_layer_routers.append(curr_router)
+    seed = 0
+    counter = 0
+    COUNT = 1000
+    while counter < COUNT:
+        random.seed(seed)
+        try:
+            routerRoot = Router("RouterRoot", None)
 
-    second_layer_routers = []
-    for flr in first_layer_routers:
-        for i in range(4):
-            curr_router = Router(f"SecondLayerRouter{i + 1}", parent_router=flr)
-            curr_router.add_neighbor(flr)
-            second_layer_routers.append(curr_router)
+            first_layer_routers = []
+            for i in range(3):
+                curr_router = Router(
+                    f"FirstLayerRouter{i + 1}", parent_router=routerRoot
+                )
+                curr_router.add_neighbor(routerRoot)
+                first_layer_routers.append(curr_router)
 
-    third_layer_routers = []
-    for slr in second_layer_routers:
-        for i in range(7):
-            curr_router = Router(f"ThirdLayerRouter{i + 1}", parent_router=slr)
-            curr_router.add_neighbor(slr)
-            third_layer_routers.append(curr_router)
+            second_layer_routers = []
+            for flr in first_layer_routers:
+                for i in range(4):
+                    curr_router = Router(f"SecondLayerRouter{i + 1}", parent_router=flr)
+                    curr_router.add_neighbor(flr)
+                    second_layer_routers.append(curr_router)
 
-    clients = []
+            third_layer_routers = []
+            for slr in second_layer_routers:
+                for i in range(7):
+                    curr_router = Router(f"ThirdLayerRouter{i + 1}", parent_router=slr)
+                    curr_router.add_neighbor(slr)
+                    third_layer_routers.append(curr_router)
 
-    def add_clients(base_router, idx):
-        switch1 = Switch(f"FLswitch1A_{idx}", parent_router=base_router)
-        switch1.add_neighbor(base_router)
-        client1A = Client(f"FLclient1A_{idx}", switch1)
-        client2A = Client(f"FLclient2A_{idx}", switch1)
+            clients = []
 
-        switch2 = Switch(f"FLswitch2A_{idx}", parent_router=base_router)
-        switch2.add_neighbor(base_router)
-        client3A = Client(f"FLclient3A_{idx}", switch2)
-        client4A = Client(f"FLclient4A_{idx}", switch2)
+            def add_clients(base_router, idx):
+                switch1 = Switch(f"FLswitch1A_{idx}", parent_router=base_router)
+                switch1.add_neighbor(base_router)
+                client1A = Client(f"FLclient1A_{idx}", switch1)
+                client2A = Client(f"FLclient2A_{idx}", switch1)
 
-        switch3 = Switch(f"FLswitch3A_{idx}", parent_router=base_router)
-        switch3.add_neighbor(base_router)
-        client5A = Client(f"FLclient5A_{idx}", switch3)
-        client6A = Client(f"FLclient6A_{idx}", switch3)
+                switch2 = Switch(f"FLswitch2A_{idx}", parent_router=base_router)
+                switch2.add_neighbor(base_router)
+                client3A = Client(f"FLclient3A_{idx}", switch2)
+                client4A = Client(f"FLclient4A_{idx}", switch2)
 
-        switch4 = Switch(f"FLswitch4A_{idx}", parent_router=base_router)
-        switch4.add_neighbor(base_router)
-        client7A = Client(f"FLclient7A_{idx}", switch4)
-        client8A = Client(f"FLclient8A_{idx}", switch4)
+                switch3 = Switch(f"FLswitch3A_{idx}", parent_router=base_router)
+                switch3.add_neighbor(base_router)
+                client5A = Client(f"FLclient5A_{idx}", switch3)
+                client6A = Client(f"FLclient6A_{idx}", switch3)
 
-        switch5 = Switch(f"FLswitch5A_{idx}", parent_router=base_router)
-        switch5.add_neighbor(base_router)
-        client9A = Client(f"FLclient9A_{idx}", switch5)
-        client10A = Client(f"FLclient10A_{idx}", switch5)
+                switch4 = Switch(f"FLswitch4A_{idx}", parent_router=base_router)
+                switch4.add_neighbor(base_router)
+                client7A = Client(f"FLclient7A_{idx}", switch4)
+                client8A = Client(f"FLclient8A_{idx}", switch4)
 
-        clients.append(client1A)
-        clients.append(client2A)
-        clients.append(client3A)
-        clients.append(client4A)
-        clients.append(client5A)
-        clients.append(client6A)
-        clients.append(client7A)
-        clients.append(client8A)
-        clients.append(client9A)
-        clients.append(client10A)
+                switch5 = Switch(f"FLswitch5A_{idx}", parent_router=base_router)
+                switch5.add_neighbor(base_router)
+                client9A = Client(f"FLclient9A_{idx}", switch5)
+                client10A = Client(f"FLclient10A_{idx}", switch5)
 
-    curr_idx = 0
+                clients.append(client1A)
+                clients.append(client2A)
+                clients.append(client3A)
+                clients.append(client4A)
+                clients.append(client5A)
+                clients.append(client6A)
+                clients.append(client7A)
+                clients.append(client8A)
+                clients.append(client9A)
+                clients.append(client10A)
 
-    add_clients(routerRoot, curr_idx)
-    curr_idx += 1
+            curr_idx = 0
 
-    for flr in first_layer_routers:
-        add_clients(flr, curr_idx)
-        curr_idx += 1
+            add_clients(routerRoot, curr_idx)
+            curr_idx += 1
 
-    for slr in second_layer_routers:
-        add_clients(slr, curr_idx)
-        curr_idx += 1
+            for flr in first_layer_routers:
+                add_clients(flr, curr_idx)
+                curr_idx += 1
 
-    for tlr in third_layer_routers:
-        add_clients(tlr, curr_idx)
-        curr_idx += 1
+            for slr in second_layer_routers:
+                add_clients(slr, curr_idx)
+                curr_idx += 1
 
-    print(
-        len(first_layer_routers),
-        len(second_layer_routers),
-        len(third_layer_routers),
-        len(clients),
-    )
+            for tlr in third_layer_routers:
+                add_clients(tlr, curr_idx)
+                curr_idx += 1
 
-    # Reset total edge cost after setting up the network
-    global TOTAL_EDGE_WEIGHT
-    TOTAL_EDGE_WEIGHT = 0
+            # print(
+            #     len(first_layer_routers),
+            #     len(second_layer_routers),
+            #     len(third_layer_routers),
+            #     len(clients),
+            # )
 
-    # TREE BUILDING GOES HERE
-    tree_build_start_time = time.time()
+            # Set up random links between routers in the network. For any pair of routers, there is a 25% chance that they are connected.
+            PROBABILITY_OF_LINK = 0.25
+            for i in range(len(first_layer_routers)):
+                for j in range(i + 1, len(first_layer_routers)):
+                    if random.random() < PROBABILITY_OF_LINK:
+                        first_layer_routers[i].add_neighbor(first_layer_routers[j])
 
-    sender_client = clients[0]
-    sender_client.create_multicast_group("group1")
+            for i in range(len(second_layer_routers)):
+                for j in range(i + 1, len(second_layer_routers)):
+                    if random.random() < PROBABILITY_OF_LINK:
+                        second_layer_routers[i].add_neighbor(second_layer_routers[j])
 
-    # Set seed to get the same recipients every time
-    random.seed(123)
-    recipients = random.sample(clients, 10)
+            for i in range(len(third_layer_routers)):
+                for j in range(i + 1, len(third_layer_routers)):
+                    if random.random() < PROBABILITY_OF_LINK:
+                        third_layer_routers[i].add_neighbor(third_layer_routers[j])
 
-    for rec in recipients:
-        rec.join_multicast_group("group1")
+            # Reset total edge cost after setting up the network
+            global ROUTER_ROOT_MESSAGES
+            ROUTER_ROOT_MESSAGES = 0
 
-    tree_build_end_time = time.time()
-    tree_build_time = tree_build_end_time - tree_build_start_time
-    # print(tree_build_time)
+            # Create 10 multicast groups with 10 random clients each
+            for i in range(10):
+                recipients = random.sample(clients, 10)
+                recipients[0].create_multicast_group(f"group{i+1}")
 
-    print("SENDING")
-    for i in range(1):
-        sender_client.send_multicast_message(
-            sender_client, "group1", Message("Hello from client1A!", MessageTypes.PING)
-        )
+                for rec in recipients[1:]:
+                    rec.join_multicast_group(f"group{i+1}")
 
-    print("done")
-    print(TOTAL_EDGE_WEIGHT)
+                # Send 10 multicast messages
+                for _ in range(10):
+                    recipients[0].send_multicast_message(
+                        recipients[0],
+                        f"group{i+1}",
+                        Message(f"Hello from group{i+1}!", MessageTypes.PING),
+                    )
+
+            recipients = random.sample(clients, 10)
+
+            for rec in recipients:
+                rec.join_multicast_group("group1")
+
+            print(ROUTER_ROOT_MESSAGES, end=", ")
+            total_root_messages += ROUTER_ROOT_MESSAGES
+
+            counter += 1
+            seed += 1
+        except KeyboardInterrupt:
+            print("stopped")
+            break
+        except:
+            seed += 1
+
+    print("")
+    print(f"Average total root messages: {total_root_messages / COUNT}")
 
 
 main()
