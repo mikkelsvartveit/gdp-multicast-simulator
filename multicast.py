@@ -4,7 +4,7 @@ import random
 
 # Enable to print every message received at any node. Disable to only print messages received at clients.
 DEBUG = False
-USE_ENCRYPTION = True
+USE_ENCRYPTION = False
 
 
 class MessageTypes(Enum):
@@ -760,6 +760,12 @@ def backtrack_full_path(start, destination, previous_nodes, edges):
 def main():
     # Enable to print every message received at any node. Disable to only print messages received at clients.
     global DEBUG
+    
+    global TREE_BUILD_WEIGHT
+    TREE_BUILD_WEIGHT = 0
+    
+    global TOTAL_EDGE_WEIGHT
+    TOTAL_EDGE_WEIGHT = 0
 
     routerRoot = Router("RouterRoot", None)
 
@@ -839,44 +845,67 @@ def main():
         add_clients(tlr, curr_idx)
         curr_idx += 1
 
-    print(
-        len(first_layer_routers),
-        len(second_layer_routers),
-        len(third_layer_routers),
-        len(clients),
-    )
-
-    # Reset total edge cost after setting up the network
-    global TOTAL_EDGE_WEIGHT
-    TOTAL_EDGE_WEIGHT = 0
+    #print(
+    #    len(first_layer_routers),
+    #    len(second_layer_routers),
+    #    len(third_layer_routers),
+    #    len(clients),
+    #)
 
     # TREE BUILDING GOES HERE
-    tree_build_start_time = time.time()
-
-    # Set seed to get the same recipients every time
-    random.seed(123)
     
-    NUM_MSG = 1
-    sum_weights = 0
-    for i in range(1000):
-        recipients = random.sample(clients, 10)
-        
-        sender_client = recipients[0]
-        sender_client.create_multicast_group("group1")
+    PROBABILITY_OF_LINK = 0.25
+    for i in range(len(first_layer_routers)):
+        for j in range(i + 1, len(first_layer_routers)):
+            if random.random() < PROBABILITY_OF_LINK:
+                first_layer_routers[i].add_neighbor(first_layer_routers[j])
 
-        for rec in recipients[1:]:
-            rec.join_multicast_group("group1")
+    for i in range(len(second_layer_routers)):
+        for j in range(i + 1, len(second_layer_routers)):
+            if random.random() < PROBABILITY_OF_LINK:
+                second_layer_routers[i].add_neighbor(second_layer_routers[j])
 
-        #print("SENDING")
-        for _ in range(NUM_MSG):
-            sender_client.send_multicast_message(
-                sender_client, "group1", Message("Hello from client1A!", MessageTypes.PING)
-            )
+    for i in range(len(third_layer_routers)):
+        for j in range(i + 1, len(third_layer_routers)):
+            if random.random() < PROBABILITY_OF_LINK:
+                third_layer_routers[i].add_neighbor(third_layer_routers[j])
+    
+    
+    # Reset total edge cost after setting up the network
+    TOTAL_EDGE_WEIGHT = 0
+    TREE_BUILD_WEIGHT = 0
+    
+    NUM_MSG = 1000   
+    recipients = random.sample(clients, 10)
+    
+    sender_client = recipients[0]
+    sender_client.create_multicast_group("group1")
 
-        #print("done")
-        #print(TOTAL_EDGE_WEIGHT)
-        sum_weights += TOTAL_EDGE_WEIGHT
+    for rec in recipients[1:]:
+        rec.join_multicast_group("group1")
+
+    #print("SENDING")
+    for _ in range(NUM_MSG):
+        sender_client.send_multicast_message(
+            sender_client, "group1", Message("Hello from client1A!", MessageTypes.PING)
+        )
+
+    #print("done")
+    return TOTAL_EDGE_WEIGHT, TREE_BUILD_WEIGHT
+
+# Set seed to get the same recipients every time
+random.seed(123)
+send_weight_sum = 0
+build_weight_sum = 0
+num_valid = 0
+for i in range(1000):
+    try:
+        curr_send_weight, curr_build_weight = main()
+        num_valid += 1
+        send_weight_sum += curr_send_weight
+        build_weight_sum += curr_build_weight
+        print(i, curr_send_weight, curr_build_weight)
+    except:
         print(i)
-    print(sum_weights/1000)
-
-main()
+print(num_valid)
+print(send_weight_sum/num_valid, build_weight_sum/num_valid)
