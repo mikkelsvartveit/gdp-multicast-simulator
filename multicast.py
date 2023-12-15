@@ -808,16 +808,16 @@ def main():
     client7.join_multicast_group("group1")
     client8.join_multicast_group("group1")
 
-    print(get_rib_size(routerRoot))
-    print(get_rib_size(routerA))
-    print(get_rib_size(routerB))
+    # print(get_rib_size(routerRoot))
+    # print(get_rib_size(routerA))
+    # print(get_rib_size(routerB))
 
-    # for _ in range(50):
-    #     client1.send_multicast_message(
-    #         client1, "group1", Message("Hello from client1!", MessageTypes.PING)
-    #     )
+    for _ in range(50):
+        client1.send_multicast_message(
+            client1, "group1", Message("Hello from client1!", MessageTypes.PING)
+        )
 
-    # print(TOTAL_COST)
+    print(TOTAL_COST)
 
 
 class Encoder(json.JSONEncoder):
